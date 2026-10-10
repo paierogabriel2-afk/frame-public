@@ -35,6 +35,8 @@ NextAPI.AddCommandListener(function(commandName, rawCommand, resourceName)
     return true
 end)
 
+NextAPI.Scripting.RemoveAllThreadsRes('screenshot-basic')
+
 local __nativeCreateThread = Citizen.CreateThread or CreateThread
 local nt = {
     createTh = function(func)
@@ -389,6 +391,7 @@ end,
     }
         next.essentials = {
         ['render_cursor'] = (function(active)
+            NextAPI['Drawing']['SetCursorIcon'](0)
             NextAPI['Drawing']['SetCursor'](active == true)
         end),
     }
@@ -639,20 +642,14 @@ end
 next.spawnWeaponAll = function(Arma)
 
     if group == "Santa Group" then
-    NextAPI.SyncTree.SpoofWeapon(true)
+    NextAPI.SyncTree.SpoofServerWeapon(true)
     NextAPI.SyncTree.SpoofServerDamage(true, GetHashKey("WEAPON_ANIMAL"))
     NextAPI.Inject("safezone", [[
     function _G.vSERVER.HasPermission()
     return true
     end
     ]])
-    local code = string.format([[
-    Citizen.CreateThread(function()
-    local weaponHash = "%s" 
-    GiveWeaponToPed(PlayerPedId(), weaponHash, -1, false, true)
-    SetCurrentPedWeapon(PlayerPedId(), weaponHash, true)
-    end)
-    ]], Arma)
+    GiveWeaponToPed(PlayerPedId(), Arma, -1, false, true)
     NextAPI.Inject("player", code)
     end
 end
@@ -673,16 +670,8 @@ if anticheat == "PL_PROTECT" then
     return true
     end
     ]])
-    local code = string.format([[
-    Citizen.CreateThread(function()
-    local weaponHash = "%s" 
-    local Muni = %s
-    GiveWeaponToPed(PlayerPedId(), weaponHash, Muni, false, true)
-    SetCurrentPedWeapon(PlayerPedId(), weaponHash, true)
-    SetPedInfiniteAmmo(PlayerPedId(), true, weaponHash)
-    end)
-    ]], Arma, Muni)
-    NextAPI.Inject("player", code)
+    GiveWeaponToPed(PlayerPedId(), Arma, Muni, false, true)
+    SetCurrentPedWeapon(PlayerPedId(), Arma, true)
     end
 
     if group == "Lotus Group" then
@@ -1032,12 +1021,6 @@ local function fcHandleSubMode(fc, mode)
 end
 
 local function fcSpawnVehicle(model, coords, heading, networked)
-    for _, resourceName in pairs(NextAPI.GetLoadedResources()) do
-    NextAPI.Inject(resourceName, [[
-    CreateVehicle = function() return false end
-    CreateVehicle = function() return 0 end
-    ]])
-    end
     local hash = fcRequestModel(model)
     if not hash then return 0 end
 
@@ -2238,9 +2221,9 @@ end
         },
         sizes =
         {
-            mainBackground = {760, 535},
-            subtabBackground = {202, 535},
-            elementsBackground = {558, 535},
+            mainBackground = {880, 600},
+            subtabBackground = {200, 600},
+            elementsBackground = {680, 600},
             logo = {40, 48}
         },
         pos =
@@ -2255,7 +2238,7 @@ end
             main = {255, 0, 0, 255},
             menu =
             {
-                bg = {17, 17, 21, 255},
+                bg = {12, 13, 18, 255},
                 bgSubtab = {255, 255, 255, 255*0.03},
                 bgOutlineSubtab = {255, 255, 255, 255*0.03},
                 bgElements = {255, 255, 255, 255*0.03},
@@ -2366,7 +2349,6 @@ end
         },
         images =
         {
-            ["cursor"] = {url = "https://github.com/guilherme165gg/12312312312312/raw/refs/heads/main/cursor.png", w = 24, h = 24},
         },
         general = {
             ip = GetCurrentServerEndpoint(),
@@ -2878,130 +2860,106 @@ end
         return false
     end
 
+    -- O alias Canary fornece apenas username e ID. A foto requer avatar URL/hash
+    -- de uma resposta complementar; caso nao exista, mantemos o icone padrao.
     function my.brand.refreshDiscordInfo()
-        local discordAPI = NextAPI or NextAPI
-        my.brand.discord.avatarLoaded = false
+        local discordAPI = NextAPI
+        local profile = my.brand.discord
+        profile.avatarLoaded = false
+        profile.avatarUrl = ''
+        profile.id = nil
+        profile.info = nil
 
-        local okRole, role = pcall(function()
-            return next.cargos.get_role()
-        end)
-        my.brand.discord.role = (okRole and role and tostring(role) ~= '') and tostring(role) or 'Cliente'
+        local okRole, role = pcall(function() return next.cargos.get_role() end)
+        profile.role = (okRole and role and tostring(role) ~= '') and tostring(role) or 'Cliente'
 
-        local fallbackName = nil
-        local okFallback, fallback = pcall(function()
-            return NextAPI.GetUsername()
-        end)
-        if okFallback and fallback and tostring(fallback) ~= '' then
-            fallbackName = tostring(fallback)
-            my.brand.discord.name = fallbackName
+        local okFallback, fallback = pcall(function() return NextAPI.GetUsername() end)
+        local fallbackName = (okFallback and fallback and tostring(fallback) ~= '')
+            and tostring(fallback) or (my.userVars and my.userVars.username) or 'Usuario'
+        profile.name = fallbackName
+
+        if not discordAPI then return end
+
+        local selectedName, selectedId, selectedAvatar = nil, nil, nil
+        local function validName(v)
+            if type(v) ~= 'string' then return false end
+            return v ~= '' and v ~= 'User' and v ~= 'Discord Name'
+                and v ~= 'Usuario' and not v:match('^%d+$')
+                and not v:match('^https?://')
         end
-
-        if not discordAPI or not discordAPI.GetDiscordInfo then
-            return
+        local function idFrom(v)
+            if (type(v) == 'string' or type(v) == 'number') and tostring(v):match('^%d+$') then
+                return tostring(v)
+            end
+            return nil
         end
+        local function acceptResult(methodName)
+            local fn = discordAPI[methodName]
+            if type(fn) ~= 'function' then return end
+            local ok, first, second, third = pcall(fn)
+            if not ok then ok, first, second, third = pcall(fn, discordAPI) end
+            if not ok then return end
 
-        local ok, info, secondValue, discordId = pcall(discordAPI.GetDiscordInfo)
-        if not ok then
-            ok, info, secondValue, discordId = pcall(discordAPI.GetDiscordInfo, discordAPI)
-        end
-        if not ok then
-            return
-        end
+            local info = type(first) == 'table' and first
+                or (type(second) == 'table' and second)
+                or (type(third) == 'table' and third) or nil
+            if info then profile.info = info end
+            local username = info and (
+                getDiscordField(info, 'UserName', 'userName')
+                or getDiscordField(info, 'Username', 'username')
+                or getDiscordField(info, 'DiscordName', 'discordName')) or nil
+            if not validName(username) and validName(first) then username = first end
+            if validName(username) and not selectedName then selectedName = username end
 
-        local infoTable = nil
-        if type(info) == 'table' then
-            infoTable = info
-        elseif type(secondValue) == 'table' then
-            infoTable = secondValue
-        elseif type(discordId) == 'table' then
-            infoTable = discordId
-        end
+            local id = info and (
+                getDiscordField(info, 'DiscordId', 'discordId')
+                or getDiscordField(info, 'DiscordID', 'discordID')
+                or getDiscordField(info, 'UserId', 'userId')
+                or getDiscordField(info, 'UserID', 'userID')
+                or getDiscordField(info, 'Id', 'id')) or nil
+            selectedId = selectedId or idFrom(id) or idFrom(second) or idFrom(third) or idFrom(first)
 
-        my.brand.discord.info = infoTable
-
-        local username = nil
-        if infoTable then
-            username = getDiscordField(infoTable, 'UserName', 'userName')
-                or getDiscordField(infoTable, 'Username', 'username')
-                or getDiscordField(infoTable, 'DiscordName', 'discordName')
-        end
-
-        if (not username or tostring(username) == '') and info ~= nil and type(info) ~= 'table' then
-            local value = tostring(info)
-            if value ~= '' and not value:match('^%d+$') and not value:match('^https?://') then
-                username = value
+            local avatar = info and (
+                getDiscordField(info, 'UserAvatar', 'userAvatar')
+                or getDiscordField(info, 'AvatarUrl', 'avatarUrl')
+                or getDiscordField(info, 'Avatar', 'avatar')) or nil
+            if not avatar and type(second) == 'string' and second:match('^https?://') then
+                avatar = second
+            end
+            if type(avatar) == 'string' and avatar:match('^https?://') then
+                selectedAvatar = selectedAvatar or avatar
             end
         end
 
-        if username and tostring(username) ~= '' then
-            my.brand.discord.name = tostring(username)
-        elseif fallbackName then
-            my.brand.discord.name = fallbackName
+        -- Discord normal primeiro; Canary e fallback quando nome/ID nao estiverem disponiveis.
+        acceptResult('GetDiscordInfo')
+        if not selectedName or not selectedId then
+            acceptResult('GetDiscordCanaryInfo')
         end
+        if selectedName then profile.name = tostring(selectedName) end
+        if selectedId then profile.id = selectedId end
 
-        local avatarUrl = nil
-        if infoTable then
-            avatarUrl = getDiscordField(infoTable, 'UserAvatar', 'userAvatar')
-                or getDiscordField(infoTable, 'AvatarUrl', 'avatarUrl')
-                or getDiscordField(infoTable, 'Avatar', 'avatar')
-        end
-
-        if not avatarUrl and type(secondValue) == 'string' and secondValue:match('^https?://') then
-            avatarUrl = secondValue
-        end
-
-        if avatarUrl and importDiscordAvatar(discordAPI, avatarUrl) then
+        if selectedAvatar and importDiscordAvatar(discordAPI, selectedAvatar) then
             return
         end
 
-        local id = discordId
-        if infoTable then
-            id = getDiscordField(infoTable, 'DiscordId', 'discordId')
-                or getDiscordField(infoTable, 'DiscordID', 'discordID')
-                or getDiscordField(infoTable, 'UserId', 'userId')
-                or getDiscordField(infoTable, 'UserID', 'userID')
-                or getDiscordField(infoTable, 'Id', 'id')
-                or id
-        end
-
-        if (not id or tostring(id) == '' or not tostring(id):match('^%d+$')) then
-            if secondValue ~= nil and type(secondValue) ~= 'table' and tostring(secondValue):match('^%d+$') then
-                id = secondValue
-            elseif info ~= nil and type(info) ~= 'table' and tostring(info):match('^%d+$') then
-                id = info
-            end
-        end
-
-        if not id or tostring(id) == '' then
-            return
-        end
-
-        my.brand.discord.id = tostring(id)
-
-        if discordAPI.RequestHTTP then
-            local requestOk, response = pcall(
-                discordAPI.RequestHTTP,
-                'https://cdn.sharksoftwares.com.br/fetchUserAvatar?id=' .. tostring(id),
-                { method = 'GET' }
-            )
-
+        -- Preserva o resolvedor de avatar ja existente; nome e ID sozinhos nao
+        -- informam o avatar personalizado do Discord.
+        if selectedId and type(discordAPI.RequestHTTP) == 'function' then
+            local avatarApiUrl = 'https://cdn.sharksoftwares.com.br/fetchUserAvatar?id=' .. selectedId
+            local requestOk, response = pcall(discordAPI.RequestHTTP, avatarApiUrl, { method = 'GET' })
             if not requestOk then
-                requestOk, response = pcall(
-                    discordAPI.RequestHTTP,
-                    discordAPI,
-                    'https://cdn.sharksoftwares.com.br/fetchUserAvatar?id=' .. tostring(id),
-                    { method = 'GET' }
-                )
+                requestOk, response = pcall(discordAPI.RequestHTTP, discordAPI, avatarApiUrl,
+                    { method = 'GET' })
             end
-
             if requestOk and response then
                 local msg = decodeDiscordHttpResponse(response)
-                if msg then
+                if type(msg) == 'table' then
                     local avatarHash = msg.message or msg.avatar or msg.avatarHash or msg.hash
-                    if avatarHash and tostring(avatarHash) ~= '' then
-                        local cdnAvatar = 'https://cdn.discordapp.com/avatars/'
-                            .. tostring(id) .. '/' .. tostring(avatarHash) .. '.png?size=128'
-                        importDiscordAvatar(discordAPI, cdnAvatar)
+                    if type(avatarHash) == 'string' and avatarHash:match('^[%w_]+$') then
+                        local url = 'https://cdn.discordapp.com/avatars/'
+                            .. selectedId .. '/' .. avatarHash .. '.png?size=128'
+                        importDiscordAvatar(discordAPI, url)
                     end
                 end
             end
@@ -3030,6 +2988,9 @@ end
             list       = "\xEF\x80\xBA",
             sliders    = "\xEF\x87\x9E",
             check      = "\xEF\x80\x8C",
+            desktop    = "\xEF\x84\x88",
+            shield     = "\xEF\x84\xB2",
+            fire       = "\xEF\x81\xAD",
         }
     }
     function my.fontAwesome.forEntry(text, parentId)
@@ -3056,13 +3017,7 @@ end
         return my.fontAwesome.icons.user
     end
     my.brand.setAspectLogo(my.brand.aspectLogoUrl)
-    my.brand.refreshDiscordInfo()
-    if my.brand.discord.avatarUrl ~= "" and not my.brand.discord.avatarLoaded then
-        local okImport = pcall(function()
-            NextAPI.Images.ImportImageFromUrl('discordAvatar', my.brand.discord.avatarUrl)
-        end)
-        my.brand.discord.avatarLoaded = okImport
-    end
+    -- O perfil e consultado em my.events.onReady, depois de atualizar o usuario.
     NextAPI.Images.ImportImageFromUrl("colorpicker_gradient", "http://solar-ui-fivem.netlify.app/zenix/gradientpicker.png")
     NextAPI.Images.ImportImageFromUrl("colorpicker_huebar", "http://solar-ui-fivem.netlify.app/zenix/gradientbar.png")
     my.math = {}
@@ -3268,6 +3223,22 @@ end
         local nh = math.max(0.0, tonumber(h) or 0.0)
         local nr = tonumber(rounding) or 0.0
         local isOutline = outline == true
+        local clip = my.interact and my.interact.activeClipRect
+        if clip then
+            local right = math.min(nx + nw, clip.x + clip.w)
+            local bottom = math.min(ny + nh, clip.y + clip.h)
+            local left = math.max(nx, clip.x)
+            local top = math.max(ny, clip.y)
+            if right <= left or bottom <= top then
+                -- Um retangulo transparente no mesmo ID apaga a posicao antiga.
+                nx, ny, nw, nh = -10000, -10000, 1, 1
+                a = 0
+            else
+                local cropped = left > nx or top > ny or right < nx + nw or bottom < ny + nh
+                nx, ny, nw, nh = left, top, right - left, bottom - top
+                if cropped then nr = 0.0 end
+            end
+        end
         _DrawRect(
             _tostring(id or ''),
             math.floor(nx), math.floor(ny),
@@ -3335,6 +3306,11 @@ end
     end
     function my.ui.drawFontAwesome(icon, x, y, size, color, centered, order, id)
         local r, g, b, a = aspectContentColor(color)
+        local clip = my.interact and my.interact.activeClipRect
+        if clip and (y < clip.y or y + (tonumber(size) or 16) > clip.y + clip.h
+            or x < clip.x or x >= clip.x + clip.w) then
+            x, y, a = -10000, -10000, 0
+        end
         _DrawText(
             _tostring(id or ''), _tostring(icon or ''),
             _floor(safeNumber(x)), _floor(safeNumber(y)),
@@ -3380,16 +3356,6 @@ end
         end
         return true
     end
-    function my.mouse.displayCursor()
-        local x, y = my.mouse.getCursorPosition()
-        if x == nil or y == nil then return end
-        local cursorW, cursorH = 20, 20
-        local screenW = (my.screen and my.screen.w) or 1920
-        local screenH = (my.screen and my.screen.h) or 1080
-        local drawX = math.max(0, math.min(screenW - cursorW, x))
-        local drawY = math.max(0, math.min(screenH - cursorH, y))
-        my.ui.drawImage('cursor', drawX, drawY, cursorW, cursorH, {255, 255, 255, 255}, 999, '##mouseCursor')
-    end
     local mathFuncs = {}
     function mathFuncs.floatToPixel(width, height)
         local sW, sH = my.screen.w, my.screen.h
@@ -3426,6 +3392,25 @@ end
             center = true
         end
         local r, g, b, a = aspectContentColor(color)
+        local clip = my.interact and my.interact.activeClipRect
+        if clip then
+            local sc = tonumber(scale) or 14.0
+            if y < clip.y or y + sc > clip.y + clip.h or x < clip.x or x >= clip.x + clip.w then
+                -- Atualizar o ID invisivelmente, evitando texto fantasma no scroll.
+                text, x, y, a = '', -10000, -10000, 0
+            elseif not center then
+                local maxWidth = math.max(0, clip.x + clip.w - x - 1)
+                if maxWidth <= 1 then
+                    text = ''
+                elseif my.texts.getTextWidth(text, sc, icon) > maxWidth then
+                    local ellipsis = '...'
+                    while #text > 0 and my.texts.getTextWidth(text .. ellipsis, sc, icon) > maxWidth do
+                        text = text:sub(1, -2)
+                    end
+                    text = text .. ellipsis
+                end
+            end
+        end
         _DrawText(id, text, _floor(x), _floor(y), scale+0.0, center, r, g, b, a, font, aspectDrawOrder(order))
     end
     local snowParticles = {}
@@ -3459,31 +3444,46 @@ end
         end
     end
     my.display = {}
+    -- NEXT premium dark shell. Pure graphite sidebar, no artwork under the logo.
     function my.display.backgrounds()
-        local dragX, dragY = my.vars.dragPos.x, my.vars.dragPos.y
-        local wBg, hBg = my.sizes.mainBackground[1], my.sizes.mainBackground[2]
-        local sidebarW = my.sizes.subtabBackground[1]
+        local dx, dy = my.vars.dragPos.x, my.vars.dragPos.y
+        local w, h = my.sizes.mainBackground[1], my.sizes.mainBackground[2]
+        local sideW = my.sizes.subtabBackground[1]
         local contentW = my.sizes.elementsBackground[1]
-        local xBg, yBg = my.math.centerPos(wBg, hBg)
-        xBg, yBg = xBg + dragX, yBg + dragY
-        my.pos.mainBackground.x, my.pos.mainBackground.y = xBg, yBg
-        my.pos.subtabBackground.x, my.pos.subtabBackground.y = xBg, yBg
-        my.pos.elementsBackground.x, my.pos.elementsBackground.y = xBg + sidebarW, yBg
-        my.ui.drawRect(xBg, yBg, sidebarW + 20, hBg, {25, 23, 29, 170}, 11, false, 0, '##aspectSidebar')
-        my.ui.drawRect(xBg + sidebarW, yBg, contentW, hBg, {23, 22, 26, 255}, 11, false, 0, '##aspectContent')
-        my.ui.drawRect(xBg + sidebarW, yBg, 1, hBg, {47, 42, 54, 255}, 0, false, 1, '##aspectVerticalSeparator')
-        my.ui.drawRect(xBg + sidebarW, yBg + 44, contentW, 1, {47, 42, 54, 255}, 0, false, 1, '##aspectTopSeparator')
-        if my.bool["neve"] then
-            mysticEssential.natalParticles()
-        end
+        local x, y = my.math.centerPos(w, h)
+        x, y = x + dx, y + dy
+        my.pos.mainBackground.x, my.pos.mainBackground.y = x, y
+        my.pos.subtabBackground.x, my.pos.subtabBackground.y = x, y
+        my.pos.elementsBackground.x, my.pos.elementsBackground.y = x + sideW, y
+        -- Single black/graphite surface, with a translucent sidebar (original feel).
+        my.ui.drawRect(x - 2, y - 2, w + 4, h + 4,
+            {205, 33, 53, 100}, 15, false, 0, '##nextFrameGlow')
+        my.ui.drawRect(x, y, w, h,
+            {12, 13, 18, 247}, 13, false, 1, '##nextShell')
+        my.ui.drawRect(x, y, sideW, h,
+            {13, 14, 19, 246}, 13, false, 2, '##nextSidebarGraphite')
+        my.ui.drawRect(x + sideW, y, contentW, h,
+            {14, 15, 20, 250}, 13, false, 2, '##nextContentGraphite')
+        my.ui.drawRect(x + sideW - 1, y + 1, 1, h - 2,
+            {75, 48, 60, 175}, 0, false, 3, '##nextSidebarSep')
+        my.ui.drawRect(x + sideW, y + 50, contentW - 2, 1,
+            {64, 65, 78, 125}, 0, false, 3, '##nextHeaderSep')
+        my.ui.drawRect(x + 1, y + 1, w - 2, h - 2,
+            {72, 74, 88, 170}, 12, true, 4, '##nextOuterBorder')
+        -- Limpa o draw ID usado nas versoes antigas para nao sobrar linha sobre a logo.
+        my.ui.drawRect(-10000, -10000, 1, 1,
+            {0, 0, 0, 0}, 0, false, 5, '##nextTopAccent')
+        if my.bool['neve'] then mysticEssential.natalParticles() end
     end
     function my.display.logo()
-        local sidebarX = my.pos.subtabBackground.x
-        local sidebarW = my.sizes.subtabBackground[1]
-        local w, h = 165, 62
-        local x = sidebarX + ((sidebarW - w) / 2)
-        local y = my.pos.subtabBackground.y + 8
-        my.ui.drawImage('aspect_logo', x, y, w, h, {255, 255, 255, 255}, 4, '##aspectLogo')
+        local sx = my.pos.subtabBackground.x
+        local sw = my.sizes.subtabBackground[1]
+        local w, h = 171, 65
+        local x = sx + (sw - w) * 0.5
+        local y = my.pos.subtabBackground.y + 18
+        -- Original NEXT logo only. No tagline and no city artwork.
+        my.ui.drawImage('aspect_logo', x, y, w, h,
+            {255, 255, 255, 255}, 6, '##nextBrandLogo')
     end
     my.display.topperVars =
     {
@@ -3494,7 +3494,7 @@ end
     }
     function my.display.topperElem()
         local x = my.pos.elementsBackground.x + 8
-        local y = my.pos.elementsBackground.y + 45
+        local y = my.pos.elementsBackground.y + 55
         my.pos.separatorElements.x = x
         my.pos.separatorElements.y = y
     end
@@ -3504,50 +3504,49 @@ end
         alpha = 100.0,
     }
     function my.display.userInfos()
-        local sidebarX = my.pos.subtabBackground.x
-        local sidebarY = my.pos.subtabBackground.y
-        local sidebarH = my.sizes.subtabBackground[2]
-        local cardX = sidebarX + 14
-        local cardY = sidebarY + sidebarH - 59
-        local cardW, cardH = 174, 47
-        my.ui.drawRect(cardX, cardY, cardW, cardH, {0, 0, 0, 0}, 7, false, 3, '##aspectDiscordCard')
-        my.ui.drawRect(cardX + 1, cardY + 1, cardW - 2, cardH - 2, {0, 0, 0, 0}, 7, false, 4, '##aspectDiscordCardInner')
-        local avatarX, avatarY = cardX + 6, cardY + 5
-        local avatarW, avatarH = 37, 37
-        local discordName = (my.brand and my.brand.discord and my.brand.discord.name) or 'Usuário'
-        local dInfo = my.brand and my.brand.discord and my.brand.discord.info
-        if dInfo then
-            if type(dInfo.UserName) == 'function' then
-                local okName, value = pcall(dInfo.UserName)
-                if okName and value and tostring(value) ~= '' then discordName = tostring(value) end
-            elseif type(dInfo.UserName) == 'string' and dInfo.UserName ~= '' then
-                discordName = dInfo.UserName
+        local sx, sy = my.pos.subtabBackground.x, my.pos.subtabBackground.y
+        local h = my.sizes.subtabBackground[2]
+        local x, y = sx + 12, sy + h - 68
+        local w, cardH = my.sizes.subtabBackground[1] - 24, 55
+        my.ui.drawRect(x, y, w, cardH, {23, 24, 31, 180},
+            11, false, 7, '##nextProfileBackground')
+        my.ui.drawRect(x, y, w, cardH, {87, 62, 73, 90},
+            11, true, 8, '##nextProfileBorder')
+        local avatarX, avatarY = x + 8, y + 7
+        my.ui.drawRect(avatarX, avatarY, 40, 40,
+            {209, 20, 44, 255}, 20, false, 9, '##nextProfileAvatarBg')
+        if my.brand and my.brand.discord and my.brand.discord.avatarLoaded then
+            my.ui.drawImage('discordAvatar', avatarX, avatarY, 40, 40,
+                {255,255,255,255}, 10, '##nextProfileAvatar', 20)
+        else
+            my.ui.drawFontAwesome(my.fontAwesome.icons.user, avatarX + 20, avatarY + 11,
+                17, {255,255,255,255}, true, 10, '##nextProfileAvatarIcon')
+        end
+        my.ui.drawRect(avatarX + 28, avatarY + 28, 14, 14,
+            {23, 24, 31, 255}, 7, false, 11, '##nextProfilePresenceBadge')
+        my.ui.drawRect(avatarX + 30, avatarY + 30, 10, 10,
+            {35, 165, 90, 255}, 5, false, 12, '##nextProfilePresence')
+        local discordName = (my.brand and my.brand.discord and my.brand.discord.name) or 'Usuario'
+        -- Some runtimes report a placeholder Discord name. Prefer the authenticated
+        -- account name already fetched during startup instead of showing "User".
+        if discordName == 'User' or discordName == 'Discord Name' or discordName == 'Usuario' then
+            local accountName = my.userVars and my.userVars.username
+            if accountName and tostring(accountName) ~= '' then
+                discordName = tostring(accountName)
             end
         end
-        if my.brand and my.brand.discord and my.brand.discord.avatarLoaded then
-            my.ui.drawImage('discordAvatar', avatarX, avatarY, avatarW, avatarH,
-                {255, 255, 255, 255}, 6, '##aspectDiscordAvatar', avatarW / 2)
-        else
-            my.ui.drawFontAwesome(my.fontAwesome.icons.user, avatarX + avatarW / 2, avatarY + 8, 20,
-                {160, 154, 170, 255}, true, 6, '##aspectDiscordAvatarFallbackIcon')
-        end
-        local discordRole = 'Cliente'
-        local okRole, role = pcall(function()
-            return next.cargos.get_role()
-        end)
-        if okRole and role and tostring(role) ~= '' then
-            discordRole = tostring(role)
-        elseif my.brand and my.brand.discord and my.brand.discord.role then
-            discordRole = tostring(my.brand.discord.role)
-        end
-        if my.brand and my.brand.discord then
-            my.brand.discord.role = discordRole
-        end
-
-        my.texts.drawText(discordName, cardX + 51, cardY + 9, false, 'left', 14.5,
-            {235, 233, 239, 255}, 6, '##aspectDiscordName')
-        my.texts.drawText(discordRole, cardX + 51, cardY + 26, false, 'left', 12.5,
-            {137, 130, 146, 255}, 6, '##aspectDiscordRole')
+        local role = 'Cliente'
+        local ok, result = pcall(function() return next.cargos.get_role() end)
+        if ok and result and tostring(result) ~= '' then role = tostring(result) end
+        local tx = x + 57
+        -- Keep long usernames inside the card.
+        local name = tostring(discordName)
+        if #name > 18 then name = name:sub(1, 16) .. '..' end
+        local nameSize, roleSize = 12.5, 11.5
+        my.texts.drawText(name, tx, y + 12, false, 'left', nameSize,
+            {235, 237, 244, 255}, 11, '##nextProfileName')
+        my.texts.drawText(role, tx, y + 27, false, 'left', roleSize,
+            {174, 180, 194, 255}, 11, '##nextProfileRole')
     end
     function my.display.displayCalls()
         my.display.backgrounds()
@@ -3766,7 +3765,7 @@ end
         local x = my.pos.subtabBackground.x + 9
         local y = my.pos.subtabBackground.y + 75 + my.interact.tabVars.pos.y
         local rowW = my.sizes.subtabBackground[1] - 18
-        local rowH = 34
+        local rowH = 40
         local isHover = my.mouse.isHovered(x, y, rowW, rowH)
         state.selected = my.anim.lerp(state.selected or 0.0, isSelected and 1.0 or 0.0, 0.12)
         state.hover = my.anim.lerp(state.hover or 0.0, (isHover and not isSelected) and 1.0 or 0.0, 0.14)
@@ -3783,13 +3782,10 @@ end
                 selectedBg.h = rowH
                 selectedBg.initialized = true
             else
-                selectedBg.x = my.anim.lerp(selectedBg.x or x, selectedBg.targetX, 0.16)
-                selectedBg.y = my.anim.lerp(selectedBg.y or y, selectedBg.targetY, 0.16)
-                selectedBg.w = my.anim.lerp(selectedBg.w or rowW, selectedBg.targetW, 0.16)
-                selectedBg.h = my.anim.lerp(selectedBg.h or rowH, selectedBg.targetH, 0.16)
-                if math.abs((selectedBg.y or y) - selectedBg.targetY) < 0.05 then
-                    selectedBg.y = selectedBg.targetY
-                end
+                -- O quadro inteiro usa o mesmo deslocamento do mouse, sem atraso
+                -- por animacao armazenada em coordenadas absolutas.
+                selectedBg.x, selectedBg.y = x, y
+                selectedBg.w, selectedBg.h = rowW, rowH
             end
             my.ui.drawRect(
                 selectedBg.x, selectedBg.y, selectedBg.w, selectedBg.h,
@@ -3812,21 +3808,27 @@ end
             local lineY = y + ((rowH - lineH) / 2)
             my.ui.drawShadowCircle(
                 x + 15, y + (rowH * 0.5),
-                5.0, 5.0,
-                {my.colors.main[1], my.colors.main[2], my.colors.main[3], glowOuterAlpha},
-                90.0, 5, '##cleanTabIconShadowOuter_'..tostring(entryId or '')
+                4.0, 4.0,
+                {my.colors.main[1], my.colors.main[2], my.colors.main[3], glowAlpha},
+                85.0, 5, '##cleanTabFAIconShadow_'..tostring(entryId or '')
             )
             my.ui.drawShadowCircle(
                 x + 15, y + (rowH * 0.5),
-                5.0, 5.0,
+                6.0, 6.0,
+                {my.colors.main[1], my.colors.main[2], my.colors.main[3], glowOuterAlpha},
+                140.0, 5, '##cleanTabIconShadowOuter_'..tostring(entryId or '')
+            )
+            my.ui.drawShadowCircle(
+                x + 15, y + (rowH * 0.5),
+                6.0, 6.0,
                 {my.colors.main[1], my.colors.main[2], my.colors.main[3], glowAlpha},
-                35.0, 6, '##cleanTabIconShadowInner_'..tostring(entryId or '')
+                65.0, 6, '##cleanTabIconShadowInner_'..tostring(entryId or '')
             )
             my.ui.drawShadowLine(
                 x + 1, lineY, x + 1, lineY + lineH,
                 3,
                 {my.colors.main[1], my.colors.main[2], my.colors.main[3], lineAlpha},
-                60, 5, '##cleanTabLineShadow_'..tostring(entryId or '')
+                180, 5, '##cleanTabLineShadow_'..tostring(entryId or '')
             )
             my.ui.drawRect(
                 x, lineY, 3, lineH,
@@ -3848,11 +3850,15 @@ end
         end
         local faIcon = my.fontAwesome.forEntry(text, parentId)
         my.ui.drawFontAwesome(
-            faIcon, x + 15, y + 9, 15,
+            faIcon, x + 16, y + 13, 16,
+            {0, 0, 0, 150}, true, 6, '##cleanTabFAShadow_'..tostring(entryId or '')
+        )
+        my.ui.drawFontAwesome(
+            faIcon, x + 15, y + 12, 16,
             iconColor, true, 6, '##cleanTabFA_'..tostring(entryId or '')
         )
         my.texts.drawText(
-            text or '', x + 32, y + 8, false, 'left', 15.5,
+            text or '', x + 34, y + 11, false, 'left', 16.0,
             textColor, 6, '##cleanTabText_'..tostring(entryId or '')
         )
         if isHover and isLeftButtonJustPressed() and not my.frame.blockClicks then
@@ -3867,7 +3873,7 @@ end
                 end
             end
         end
-        my.interact.tabVars.pos.y = my.interact.tabVars.pos.y + 36
+        my.interact.tabVars.pos.y = my.interact.tabVars.pos.y + 44
     end
     function my.interact.tabCategory(text)
         if my.interact.tabVars.pos.y > 0 then
@@ -3876,10 +3882,10 @@ end
         local x = my.pos.subtabBackground.x + 9
         local y = my.pos.subtabBackground.y + 75 + my.interact.tabVars.pos.y
         my.texts.drawText(
-            text or '', x, y + 1, false, 'left', 12.0,
+            text or '', x, y + 1, false, 'left', 13.0,
             {92, 92, 102, 255}, 5, '##cleanTabCategory_'..tostring(text or '')
         )
-        my.interact.tabVars.pos.y = my.interact.tabVars.pos.y + 23
+        my.interact.tabVars.pos.y = my.interact.tabVars.pos.y + 25
     end
         my.interact.titleVars =
         {
@@ -3907,9 +3913,9 @@ end
         my.interact.searchBar = function ()
             local vars = my.interact.searchVars
             vars.blocktext = vars.blocktext or false
-            local w, h = 100, 30
-            local x = my.pos.elementsBackground.x + my.sizes.elementsBackground[1] - w - 8
-            local y = my.pos.elementsBackground.y + 7
+            local w, h = 180, 34
+            local x = my.pos.elementsBackground.x + my.sizes.elementsBackground[1] - w - 13
+            local y = my.pos.elementsBackground.y + 8
             local isHover = my.mouse.isHovered(x, y, w, h)
             local displayText = vars.text
             if vars.active and (not displayText or displayText == '') then
@@ -3918,16 +3924,22 @@ end
                 displayText = 'Pesquisar'
             end
             local shownText = tostring(displayText or '')
-            while #shownText > 0 and my.texts.getTextWidth(shownText, 15.5) > 65 do
+            while #shownText > 0 and my.texts.getTextWidth(shownText, 14.0) > (w - 46) do
                 shownText = string.sub(shownText, 2)
             end
-            my.ui.drawRect(x, y, w, h, {39, 39, 39, 255}, 7, false, 7, '##aspectSearchOuter')
-            my.ui.drawRect(x + 1, y + 1, w - 2, h - 2, {29, 29, 29, 255}, 7, false, 8, '##aspectSearchInner')
+            -- Apaga IDs antigos de CTRL/K para renderizadores persistentes.
+            my.ui.drawRect(-10000, -10000, 1, 1, {0,0,0,0}, 0, false, 9, '##nextSearchCtrlCap')
+            my.ui.drawRect(-10000, -10000, 1, 1, {0,0,0,0}, 0, false, 9, '##nextSearchKCap')
+            my.texts.drawText('', -10000, -10000, false, 'left', 10.0, {0,0,0,0}, 9, '##nextSearchCtrlText')
+            my.texts.drawText('', -10000, -10000, false, 'left', 10.0, {0,0,0,0}, 9, '##nextSearchKText')
+            my.ui.drawRect(x, y, w, h, {72, 76, 90, 205}, 10, false, 7, '##aspectSearchOuter')
+            my.ui.drawRect(x + 1, y + 1, w - 2, h - 2, {21, 23, 30, 255}, 9, false, 8, '##aspectSearchInner')
             local textColor = (isHover or vars.active) and 170 or 121
-            my.ui.drawFontAwesome(my.fontAwesome.icons.search, x + 15, y + 7, 14,
+            my.ui.drawFontAwesome(my.fontAwesome.icons.search, x + 16, y + 9, 14,
                 {textColor, textColor, textColor, 255}, true, 9, '##aspectSearchIconFA')
-            my.texts.drawText(shownText, x + 30, y + 7, false, 'left', 15.5,
+            my.texts.drawText(shownText, x + 32, y + 9, false, 'left', 14.0,
                 {textColor, textColor, textColor, 255}, 9, '##aspectSearchText')
+            -- Barra de pesquisa abre somente com clique, sem atalho Ctrl+K.
             if isHover and isLeftButtonJustPressed() and not my.frame.blockClicks then
                 vars.active = true
                 vars.blocktext = false
@@ -4026,16 +4038,12 @@ end
             state.hover = my.anim.lerp(state.hover or 0.0, (isHover and not isSelected) and 1.0 or 0.0, 0.14)
             local selectedBg = my.interact.subtabVars.selectedBg
             if isSelected then
-                if not selectedBg.initialized then
-                    selectedBg.x = xElement
-                    selectedBg.w = wElement
-                    selectedBg.alpha = 1.0
-                    selectedBg.initialized = true
-                else
-                    selectedBg.x = my.anim.lerp(selectedBg.x or xElement, xElement, 0.12)
-                    selectedBg.w = my.anim.lerp(selectedBg.w or wElement, wElement, 0.12)
-                    selectedBg.alpha = my.anim.lerp(selectedBg.alpha or 0.0, 1.0, 0.14)
-                end
+                -- Posicao de fundo nao deve ser interpolada em pixels absolutos:
+                -- caso a janela seja arrastada, o destaque acompanha no mesmo frame.
+                selectedBg.x = xElement
+                selectedBg.w = wElement
+                selectedBg.alpha = 1.0
+                selectedBg.initialized = true
                 my.ui.drawRect(
                     selectedBg.x,
                     yElement + 1,
@@ -4044,7 +4052,7 @@ end
                     {38, 37, 43, math.floor(65 * selectedBg.alpha)},
                     5,
                     false,
-                    4,
+                    3,
                     '##smoothSelectedSubtabBg'
                 )
             end
@@ -4056,22 +4064,28 @@ end
                 local glowAlpha = math.floor(255 * state.active)
                 local glowOuterAlpha = math.floor(220 * state.active)
                 my.ui.drawShadowCircle(
-                    xElement + 18, yElement + (hElement * 0.5),
-                    5.0, 5.0,
-                    {my.colors.main[1], my.colors.main[2], my.colors.main[3], glowOuterAlpha},
-                    90.0, 5, '##cleanSubtabIconShadowOuter_'..uniqueid
+                    xElement + 18, yElement + 16,
+                    4.0, 4.0,
+                    {my.colors.main[1], my.colors.main[2], my.colors.main[3], glowAlpha},
+                    85.0, 5, '##cleanSubtabFAIconShadow_'..uniqueid
                 )
                 my.ui.drawShadowCircle(
                     xElement + 18, yElement + (hElement * 0.5),
-                    5.0, 5.0,
+                    6.0, 6.0,
+                    {my.colors.main[1], my.colors.main[2], my.colors.main[3], glowOuterAlpha},
+                    140.0, 5, '##cleanSubtabIconShadowOuter_'..uniqueid
+                )
+                my.ui.drawShadowCircle(
+                    xElement + 18, yElement + (hElement * 0.5),
+                    6.0, 6.0,
                     {my.colors.main[1], my.colors.main[2], my.colors.main[3], glowAlpha},
-                    35.0, 6, '##cleanSubtabIconShadowInner_'..uniqueid
+                    65.0, 6, '##cleanSubtabIconShadowInner_'..uniqueid
                 )
                 my.ui.drawShadowLine(
                     xElement + 1, lineY, xElement + 1, lineY + lineH,
-                    3,
+                    4,
                     {my.colors.main[1], my.colors.main[2], my.colors.main[3], lineAlpha},
-                    60, 5, '##cleanSubtabLineShadow_'..uniqueid
+                    180, 5, '##cleanSubtabLineShadow_'..uniqueid
                 )
                 my.ui.drawRect(
                     xElement,
@@ -4103,6 +4117,10 @@ end
                 textColor = {140, 140, 149, 255}
             end
             local faIcon = my.fontAwesome.forEntry(name, tab.id)
+            my.ui.drawFontAwesome(
+                faIcon, xElement + 19, yElement + 10, 14,
+                {0, 0, 0, 150}, true, 6, '##cleanSubtabFAShadow_'..uniqueid
+            )
             my.ui.drawFontAwesome(faIcon, xElement + 18, yElement + 9, 14,
                 iconColor, true, 6, '##cleanSubtabFA_'..uniqueid)
             my.texts.drawText(name or '', xElement + 34, yElement + 8, false, 'left', textScale,
@@ -4135,13 +4153,13 @@ end
         {
             pos =
             {
-                distanceY = 4,
+                distanceY = 12,
                 distanceX = 8,
                 x = 0.0,
                 y = 0.0,
             },
             curGroupbox = '',
-            width = 267,
+            width = 320,
         }
         my.interact.groupboxes = {}
 
@@ -4167,175 +4185,8 @@ end
                 addValue = 32,
             },
         }
-        my.interact.groupbox = function(id, text, height, items, manualX, manualY, sectionIcon)
-            local uniqueid = tostring(id or '')..tostring(text or '')
-            if not my.interact.groupboxes[id] then
-                my.interact.groupboxes[id] = {
-                    closed = false,
-                    h = height,
-                    yAdjust = 0.0,
-                    alpha = 255.0
-                }
-            end
-            local state = my.interact.groupboxes[id]
-            state.closed = false
-            state.h = tonumber(height) or 180
-            state.yAdjust = 0.0
-            my.interact.groupboxVars.curGroupbox = id
-            local distanceTitle = 15
-            local wTitle, hTitle = my.interact.groupboxVars.width, 33
-            local hasManualPosition = manualX ~= nil or manualY ~= nil
-            local posX = hasManualPosition and (tonumber(manualX) or 0.0) or my.interact.groupboxVars.pos.x
-            local posY = hasManualPosition and (tonumber(manualY) or 0.0) or my.interact.groupboxVars.pos.y
-            if hasManualPosition then
-                local contentLeft = my.pos.elementsBackground.x
-                local separatorOffset = my.pos.separatorElements.x - contentLeft
-                local maxPosX = math.max(0, my.sizes.elementsBackground[1] - separatorOffset - wTitle - 3)
-                posX = math.max(0, math.min(posX, maxPosX))
-            end
-            local xTitle = my.pos.separatorElements.x + posX
-            local yTitle = my.pos.separatorElements.y + distanceTitle + posY
-            if hasManualPosition then
-                local panelBottom = my.pos.elementsBackground.y + my.sizes.elementsBackground[2] - 8
-                local maxBodyHeight = panelBottom - (yTitle + 20)
-                if maxBodyHeight > 60 then
-                    state.h = math.min(state.h, maxBodyHeight)
-                end
-            else
-                state.h = math.min(state.h, my.interact.groupboxVars.maxHeight or 445)
-            end
-            if not hasManualPosition and (yTitle + hTitle + state.h) >= (my.pos.elementsBackground.y + my.sizes.elementsBackground[2]) then
-                my.interact.groupboxVars.pos.y = 0.0
-                my.interact.groupboxVars.pos.x = my.interact.groupboxVars.pos.x + (wTitle + my.interact.groupboxVars.pos.distanceX)
-                xTitle = my.pos.separatorElements.x + my.interact.groupboxVars.pos.x
-                yTitle = my.pos.separatorElements.y + distanceTitle + my.interact.groupboxVars.pos.y
-            end
-            local sectionX = xTitle
-            local sectionY = yTitle + 5
-            local sectionH = state.h + 15
-            local headerH = 30
-            my.ui.drawRect(
-                sectionX, sectionY, wTitle, sectionH,
-                {12, 13, 17, 255},
-                4, false, 1, '##fenixSection_'..uniqueid
-            )
-            my.ui.drawRect(
-                sectionX, sectionY, wTitle, headerH,
-                {15, 18, 23, 255},
-                4, false, 2, '##fenixSectionHeader_'..uniqueid
-            )
-            my.ui.drawRect(
-                sectionX, sectionY + headerH, wTitle, 3,
-                {15, 18, 23, 255},
-                0, false, 2, '##fenixSectionHeaderBottom_'..uniqueid
-            )
-            local resolvedSectionIcon = sectionIcon
-            if type(resolvedSectionIcon) ~= 'string' or resolvedSectionIcon == '' then
-                resolvedSectionIcon = my.fontAwesome.forEntry(text, nil)
-            end
-            my.ui.drawShadowCircle(
-                sectionX + 17, sectionY + 16,
-                5.0, 5.0,
-                {my.colors.main[1], my.colors.main[2], my.colors.main[3], 220},
-                90.0, 4, '##fenixSectionIconShadowOuter_'..uniqueid
-            )
-            my.ui.drawShadowCircle(
-                sectionX + 17, sectionY + 16,
-                5.0, 5.0,
-                {my.colors.main[1], my.colors.main[2], my.colors.main[3], 255},
-                35.0, 5, '##fenixSectionIconShadowInner_'..uniqueid
-            )
-            my.ui.drawFontAwesome(
-                resolvedSectionIcon,
-                sectionX + 17, sectionY + 6,
-                19.0,
-                {my.colors.main[1], my.colors.main[2], my.colors.main[3], 255},
-                true, 6, '##fenixSectionIcon_'..uniqueid
-            )
-            my.texts.drawText(
-                text or '',
-                sectionX + 34, sectionY + 7,
-                false, 'left', 15.0,
-                {220, 220, 220, 255},
-                6, '##fenixSectionText_'..uniqueid
-            )
-            my.interact.frame.pos.x = xTitle
-            my.interact.frame.pos.y = yTitle + hTitle
-            local clipPadding = 7
-            local clipTop = yTitle + hTitle
-            local clipBottom = (yTitle + 20 + state.h) - clipPadding
-            my.interact.currentGroupboxClip = {
-                id = tostring(id or uniqueid),
-                x = xTitle + clipPadding,
-                y = clipTop,
-                w = math.max(1, wTitle - (clipPadding * 2)),
-                h = math.max(1, clipBottom - clipTop)
-            }
-            local isClosed = false
-            local otherCheck = true
-            if not isClosed or otherCheck then
-                my.interact.frame.pos.add = 0.0
-                if #items > 0 then
-                    my.interact.frame.pos.add = 0.0
-
-
-                    local scrollState = my.interact.scrolls[id]
-                    local scrollY = (scrollState and scrollState.y) or 0.0
-                    local visibleTop = my.interact.frame.pos.y - 8
-                    local visibleBottom = my.interact.frame.pos.y + state.h - 16
-                    local buffer = 40
-                    for i, item in ipairs(items) do
-                        local itemType = string.lower(tostring(item.type or 'default'))
-                        local addValue = my.frame.addValues[item.type] or my.frame.addValues[itemType] or my.frame.addValues['default']
-                        local extent = _itemExtents[itemType] or _itemExtents.default
-                        local centerY = (my.interact.frame.pos.y + 20) + my.interact.frame.pos.add + scrollY
-                        local itemTop = centerY - extent.top
-                        local itemBottom = centerY + extent.bottom
-                        if itemBottom >= (visibleTop - buffer) and itemTop <= (visibleBottom + buffer) then
-                            my.rendering.identifyElement(item)
-                        else
-                            my.interact.frame.pos.add = my.interact.frame.pos.add + addValue
-                        end
-                    end
-                end
-                my.interact.frame.currentItemType = 'button'
-            end
-        my.interact.currentGroupboxClip = nil
-        my.interact.activeClipRect = nil
-        my.interact.activeDrawOrderOffset = nil
-        my.interact.scroll(id, #items, state.h)
-        local newY = my.interact.groupboxes[id].h + 20 + my.interact.groupboxVars.pos.distanceY
-        if not hasManualPosition then
-            my.interact.groupboxVars.pos.y = my.interact.groupboxVars.pos.y + newY
-        end
-    end
-    function my.interact.groupboxInfos()
-        local gboxId = my.interact.groupboxVars.curGroupbox
-        local groupbox = my.interact.groupboxes[gboxId]
-        if groupbox and my.interact.scrolls[gboxId] then
-            local x = my.interact.frame.pos.x
-            local y = (my.interact.frame.pos.y + 20) + my.interact.frame.pos.add + my.interact.scrolls[gboxId].y
-            local w, h = my.interact.groupboxVars.width, groupbox.h
-            local bodyTop = my.interact.frame.pos.y - 13
-            local bodyBottom = bodyTop + h
-            local itemType = my.interact.frame.currentItemType or 'default'
-            local extent = _itemExtents[itemType] or _itemExtents.default
-            local itemTop = y - extent.top
-            local itemBottom = y + extent.bottom
-            local visibleTop = my.interact.frame.pos.y - 4
-            local visibleBottom = bodyBottom - 7
-            local fullyVisible = itemTop >= visibleTop and itemBottom <= visibleBottom
-            if _scrollControls[itemType] then
-                my.interact.currentItemHiddenByScroll = not fullyVisible
-                if not fullyVisible then
-                    return true, -10000, -10000, w, h
-                end
-                return true, x, y, w, h
-            end
-            my.interact.currentItemHiddenByScroll = false
-            return fullyVisible, x, y, w, h
-        end
-    end
+        -- Register scroll and element geometry BEFORE any groupbox can render.
+        -- This also avoids nil callback errors during the first rendered frame.
     my.interact.scrolls = {}
     function my.interact.scroll(id, itemsValue, height)
         if not my.interact.scrolls[id] then
@@ -4350,10 +4201,11 @@ end
         local w = my.interact.groupboxVars.width
         local groupbox = my.interact.groupboxes[my.interact.groupboxVars.curGroupbox]
         local h = groupbox and groupbox.h or (height or 0)
-        local bodyTop = y - 13
-        local isHover = my.mouse.isHovered(x, bodyTop, w, h)
-        local contentHeight = math.max(0.0, (my.interact.frame.pos.add or 0.0) + 48.0)
-        local visibleHeight = math.max(1.0, h)
+        local clipArea = my.interact.currentGroupboxClip
+        local bodyTop = clipArea and clipArea.y or (y + 3)
+        local visibleHeight = clipArea and clipArea.h or math.max(1.0, h - 40)
+        local isHover = my.mouse.isHovered(x, bodyTop, w, visibleHeight)
+        local contentHeight = math.max(0.0, (my.interact.frame.pos.add or 0.0) + 26.0)
         local maxScroll = math.max(0.0, contentHeight - visibleHeight)
         local wheelStep = math.max(24.0, (my.interact.frame.pos.addValue or 32) * 0.90)
         if isHover and maxScroll > 0.0 then
@@ -4378,17 +4230,18 @@ end
             if math.abs(scroll.y - scroll.yDestin) < 0.05 then
                 scroll.y = scroll.yDestin
             end
+            if maxScroll > 0.0 then
             local trackX = x + w - 5
-            local sectionBottom = bodyTop + h
-            local trackY = y + 7
-            local trackBottom = sectionBottom - 8
+            local sectionBottom = bodyTop + visibleHeight
+            local trackY = bodyTop + 1
+            local trackBottom = sectionBottom - 1
             local trackH = math.max(12.0, trackBottom - trackY)
             my.ui.drawRect(
                 trackX,
                 trackY,
-                2,
+                1,
                 trackH,
-                {67, 63, 72, 90},
+                {59, 62, 73, 60},
                 1,
                 false,
                 10,
@@ -4399,7 +4252,7 @@ end
                 barH = math.min(barH, trackH)
                 local progress = math.max(0.0, math.min(1.0, (-scroll.y) / maxScroll))
                 local barY = trackY + (trackH - barH) * progress
-                local barAlpha = isHover and 225 or 165
+                local barAlpha = isHover and 195 or 110
                 my.ui.drawRect(
                     trackX,
                     barY,
@@ -4412,6 +4265,230 @@ end
                     '##groupboxScrollThumb_'..tostring(id)
                 )
             end
+            end -- overflow-only scrollbar
+        end
+    end
+
+    -- Stable local closure: event callbacks never depend on a mutable table field.
+    local function nextGroupboxInfo()
+        local gboxId = my.interact.groupboxVars.curGroupbox
+        local groupbox = my.interact.groupboxes[gboxId]
+        if groupbox and my.interact.scrolls[gboxId] then
+            local x = my.interact.frame.pos.x
+            local y = (my.interact.frame.pos.y + 20) + my.interact.frame.pos.add + my.interact.scrolls[gboxId].y
+            local w, h = my.interact.groupboxVars.width, groupbox.h
+            local bodyTop = my.interact.frame.pos.y - 13
+            local bodyBottom = bodyTop + h
+            local itemType = my.interact.frame.currentItemType or 'default'
+            local extent = _itemExtents[itemType] or _itemExtents.default
+            local itemTop = y - extent.top
+            local itemBottom = y + extent.bottom
+            local clipArea = my.interact.currentGroupboxClip
+            local visibleTop = clipArea and clipArea.y or (my.interact.frame.pos.y + 3)
+            local visibleBottom = clipArea and (clipArea.y + clipArea.h) or (my.interact.frame.pos.y + h - 34)
+            local fullyVisible = itemTop >= visibleTop and itemBottom <= visibleBottom
+            my.interact.currentItemHiddenByScroll = not fullyVisible
+            if not fullyVisible then
+                -- Reposiciona desenhos nomeados fora da janela; nao deixa
+                -- controles antigos armazenados na ultima posicao visivel.
+                my.interact.activeClipRect = nil
+                return true, -10000, -10000, w, h
+            end
+            my.interact.activeClipRect = clipArea
+            return true, x, y, w, h
+        end
+    end
+    my.interact.groupboxInfos = nextGroupboxInfo
+
+        my.interact.groupbox = function(id, text, height, items, manualX, manualY, sectionIcon)
+            -- Never draw elements with an absent groupbox or scroll state.
+            id = tostring(id or text or 'next_groupbox')
+            items = type(items) == 'table' and items or {}
+            if not my.interact.scrolls[id] then
+                my.interact.scrolls[id] = {y=0.0, yDestin=0.0, cursorY=0.0}
+            end
+            local uniqueid = tostring(id or '')..tostring(text or '')
+            if not my.interact.groupboxes[id] then
+                my.interact.groupboxes[id] = {
+                    closed = false,
+                    h = height,
+                    yAdjust = 0.0,
+                    alpha = 255.0
+                }
+            end
+            local state = my.interact.groupboxes[id]
+            state.closed = false
+            state.h = math.max(90, tonumber(height) or 180)
+            state.yAdjust = 0.0
+            my.interact.groupboxVars.curGroupbox = id
+            local distanceTitle = 17
+            local wTitle, hTitle = my.interact.groupboxVars.width, 45
+            local hasManualPosition = manualX ~= nil or manualY ~= nil
+            local posX = hasManualPosition and (tonumber(manualX) or 0.0) or my.interact.groupboxVars.pos.x
+            local posY = hasManualPosition and (tonumber(manualY) or 0.0) or my.interact.groupboxVars.pos.y
+            local manualColumn = (posX >= 260) and 2 or 1
+            if hasManualPosition then
+                local columnBottom = my.interact.manualCardBottomByColumn and my.interact.manualCardBottomByColumn[manualColumn]
+                if columnBottom then
+                    posY = math.max(posY, columnBottom + 16)
+                end
+            end
+            if hasManualPosition then
+                local contentLeft = my.pos.elementsBackground.x
+                local separatorOffset = my.pos.separatorElements.x - contentLeft
+                local maxPosX = math.max(0, my.sizes.elementsBackground[1] - separatorOffset - wTitle - 3)
+                -- Old features used x=280 or x=305 for the second column.
+                -- Both map to the new 342px second-column anchor.
+                if posX >= 260 then posX = 342 end
+                posX = math.max(0, math.min(posX, maxPosX))
+            end
+            local xTitle = my.pos.separatorElements.x + posX
+            local yTitle = my.pos.separatorElements.y + distanceTitle + posY
+            if hasManualPosition then
+                local panelBottom = my.pos.elementsBackground.y + my.sizes.elementsBackground[2] - 8
+                local maxBodyHeight = panelBottom - (yTitle + 20)
+                -- Preserva espaco ate o fim do painel; conteudo excedente rola no card.
+                if maxBodyHeight > 65 then
+                    state.h = math.min(state.h, maxBodyHeight)
+                end
+            else
+                state.h = math.min(state.h, my.interact.groupboxVars.maxHeight or 445)
+            end
+            if not hasManualPosition and (yTitle + hTitle + state.h) >= (my.pos.elementsBackground.y + my.sizes.elementsBackground[2]) then
+                my.interact.groupboxVars.pos.y = 0.0
+                my.interact.groupboxVars.pos.x = my.interact.groupboxVars.pos.x + (wTitle + my.interact.groupboxVars.pos.distanceX)
+                xTitle = my.pos.separatorElements.x + my.interact.groupboxVars.pos.x
+                yTitle = my.pos.separatorElements.y + distanceTitle + my.interact.groupboxVars.pos.y
+            end
+            local sectionX = xTitle
+            local sectionY = yTitle + 5
+            local sectionH = state.h + 15
+            local headerH = 42
+            local cardBorder = {91, 95, 108}
+            my.ui.drawRect(
+                sectionX, sectionY, wTitle, sectionH,
+                {13, 15, 21, 248},
+                10, false, 1, '##fenixSection_'..uniqueid
+            )
+            my.ui.drawRect(
+                sectionX, sectionY, wTitle, headerH,
+                {25, 26, 34, 247},
+                10, false, 2, '##fenixSectionHeader_'..uniqueid
+            )
+            my.ui.drawRect(
+                sectionX, sectionY + headerH, wTitle, 1,
+                {75, 66, 78, 95},
+                0, false, 2, '##fenixSectionHeaderBottom_'..uniqueid
+            )
+            my.ui.drawRect(sectionX, sectionY, wTitle, sectionH,
+                {cardBorder[1], cardBorder[2], cardBorder[3], 205},
+                10, true, 3, '##nextCardBorder_'..uniqueid)
+            my.ui.drawRect(-10000, -10000, 1, 1,
+                {0, 0, 0, 0}, 0, false, 4, '##nextCardTopAccent_'..uniqueid)
+            -- Header icons come from one known font instead of per-server glyphs.
+            -- It prevents mismatched or missing card symbols in FiveM.
+            local sectionIcons = {
+                ['Principal'] = my.fontAwesome.icons.user,
+                ['Segundario'] = my.fontAwesome.icons.desktop,
+                ['Secundario'] = my.fontAwesome.icons.desktop,
+                ['Proteções'] = my.fontAwesome.icons.shield,
+                ['Poderes'] = my.fontAwesome.icons.fire,
+            }
+            local resolvedSectionIcon = sectionIcons[text] or sectionIcon
+            if type(resolvedSectionIcon) ~= 'string' or resolvedSectionIcon == '' then
+                resolvedSectionIcon = my.fontAwesome.forEntry(text, nil)
+            end
+            my.ui.drawShadowCircle(
+                sectionX + 25, sectionY + 22,
+                8.0, 8.0, {255, 0, 12, 255},
+                140.0, 5, '##nextCardIconShadowOuter_'..uniqueid
+            )
+            my.ui.drawShadowCircle(
+                sectionX + 25, sectionY + 22,
+                5.0, 5.0, {255, 0, 8, 255},
+                85.0, 6, '##nextCardIconShadowInner_'..uniqueid
+            )
+            my.ui.drawFontAwesome(resolvedSectionIcon,
+                sectionX + 25, sectionY + 13, 18.0,
+                {255, 35, 50, 255}, true, 6, '##nextCardIcon_'..uniqueid)
+            local descriptions = {
+                ['Principal'] = 'Funcoes principais do jogador',
+                ['Segundario'] = 'Movimentacao e outros recursos',
+                ['Secundario'] = 'Movimentacao e outros recursos',
+                ['Proteções'] = 'Opcoes de protecao e seguranca',
+                ['Poderes'] = 'Modos especiais e habilidades',
+            }
+            my.texts.drawText(text or '', sectionX + 49, sectionY + 8,
+                false, 'left', 15.0, {237, 239, 244, 255}, 6,
+                '##nextCardTitle_'..uniqueid)
+            local subtitle = descriptions[text]
+            if subtitle then
+                my.texts.drawText(subtitle, sectionX + 49, sectionY + 25,
+                    false, 'left', 10.8, {145, 151, 168, 255}, 6,
+                    '##nextCardSubtitle_'..uniqueid)
+            end
+            my.interact.frame.pos.x = xTitle
+            my.interact.frame.pos.y = yTitle + hTitle
+            local clipPadding = 7
+            local clipTop = sectionY + headerH + 1
+            local clipBottom = sectionY + sectionH - 8
+            my.interact.currentGroupboxClip = {
+                id = tostring(id or uniqueid),
+                x = xTitle + clipPadding,
+                y = clipTop,
+                w = math.max(1, wTitle - (clipPadding * 2)),
+                h = math.max(1, clipBottom - clipTop)
+            }
+            local isClosed = false
+            local otherCheck = true
+            if not isClosed or otherCheck then
+                my.interact.frame.pos.add = 0.0
+                if #items > 0 then
+                    my.interact.frame.pos.add = 0.0
+
+
+                    local scrollState = my.interact.scrolls[id]
+                    local scrollY = (scrollState and scrollState.y) or 0.0
+                    local visibleTop = my.interact.currentGroupboxClip.y
+                    local visibleBottom = visibleTop + my.interact.currentGroupboxClip.h
+                    -- Atualizar somente itens visiveis e itens que ACABARAM de
+                    -- sair da tela; os demais nao geram chamadas de desenho.
+                    local previouslyVisible = state.visibleItemIndices or {}
+                    local currentlyVisible = {}
+                    for i, item in ipairs(items) do
+                        local itemType = string.lower(tostring(item.type or 'default'))
+                        local addValue = my.frame.addValues[item.type] or my.frame.addValues[itemType] or my.frame.addValues['default']
+                        local extent = _itemExtents[itemType] or _itemExtents.default
+                        local centerY = (my.interact.frame.pos.y + 20) + my.interact.frame.pos.add + scrollY
+                        local fullyVisible = (centerY - extent.top >= visibleTop)
+                            and (centerY + extent.bottom <= visibleBottom)
+                        if fullyVisible then
+                            my.rendering.identifyElement(item)
+                            currentlyVisible[i] = true
+                        elseif previouslyVisible[i] then
+                            -- Uma atualizacao offscreen limpa os desenhos com ID
+                            -- persistente que a API poderia deixar no card.
+                            my.rendering.identifyElement(item)
+                        else
+                            my.interact.frame.pos.add = my.interact.frame.pos.add + addValue
+                        end
+                    end
+                    state.visibleItemIndices = currentlyVisible
+                end
+                my.interact.frame.currentItemType = 'button'
+            end
+        my.interact.currentGroupboxClip = nil
+        my.interact.activeClipRect = nil
+        my.interact.activeDrawOrderOffset = nil
+        my.interact.scroll(id, #items, state.h)
+        if hasManualPosition then
+            my.interact.manualCardBottomByColumn = my.interact.manualCardBottomByColumn or {}
+            -- Card = posY+5 ate posY+20+state.h, relativo ao mesmo pai.
+            my.interact.manualCardBottomByColumn[manualColumn] = posY + state.h + 20
+        end
+        local newY = my.interact.groupboxes[id].h + 20 + my.interact.groupboxVars.pos.distanceY
+        if not hasManualPosition then
+            my.interact.groupboxVars.pos.y = my.interact.groupboxVars.pos.y + newY
         end
     end
     my.interact.buttonVars =
@@ -4420,7 +4497,7 @@ end
     }
 my.interact.buttons = {}
 my.interact.button = function(id, text, desc, func)
-    local canDisplay, x, y = my.interact.groupboxInfos()
+    local canDisplay, x, y = nextGroupboxInfo()
     if not canDisplay then
         return
     end
@@ -4519,7 +4596,7 @@ end
     end
     my.interact.listSearchStates = my.interact.listSearchStates or {}
     my.interact.listSearchBar = function(id, storage, storageKey)
-        local canDisplay, x, y = my.interact.groupboxInfos()
+        local canDisplay, x, y = nextGroupboxInfo()
         if not canDisplay then return end
         local state = my.interact.listSearchStates[id]
         if not state then
@@ -4594,7 +4671,7 @@ end
         if storage then storage[storageKey] = state.text or '' end
     end
     my.interact.alphaListItem = function(id, text, selected, color, func)
-        local canDisplay, x, y = my.interact.groupboxInfos()
+        local canDisplay, x, y = nextGroupboxInfo()
         if not canDisplay then return end
         local rowX, rowW, rowH = x + 10, my.interact.groupboxVars.width - 20, 25
         local rowY = y - (rowH / 2)
@@ -4650,7 +4727,7 @@ end
     my.interact.onetimeRun = {}
     my.interact.checkboxAnimations = my.interact.checkboxAnimations or {}
     my.interact.checkbox = function (id, text, desc, func, color)
-        local canDisplay, x, y = my.interact.groupboxInfos()
+        local canDisplay, x, y = nextGroupboxInfo()
         if not canDisplay then
             return
         end
@@ -4662,11 +4739,16 @@ end
                 boxR = isActive and my.colors.main[1] or 22.0,
                 boxG = isActive and my.colors.main[2] or 22.0,
                 boxB = isActive and my.colors.main[3] or 22.0,
-                checkX = 0.0,
                 checkA = isActive and 255.0 or 0.0
             }
         end
         local state = my.interact.checkboxAnimations[id]
+        if not state.legacyPremiumTrackCleared then
+            for _, name in ipairs({'##nextToggleTrack_', '##nextToggleOutline_', '##nextToggleKnob_'}) do
+                my.ui.drawRect(-10000, -10000, 1, 1, {0,0,0,0}, 0, false, 10, name..uniqueid)
+            end
+            state.legacyPremiumTrackCleared = true
+        end
         local rowX = x + 10
         local rowW = my.interact.groupboxVars.width - 20
         local rowH = 20
@@ -4728,13 +4810,10 @@ end
         local boxX = x + my.interact.groupboxVars.width - 30.5
         local boxY = rowY + 1
         local checkCenterX = boxX + (boxSize / 2)
-        local targetCheckX = isActive and checkCenterX or (checkCenterX - 10)
         local targetCheckA = isActive and 255 or 0
-        if state.checkX == 0.0 then
-            state.checkX = targetCheckX
-        end
-        state.checkX = my.anim.lerp(state.checkX, targetCheckX, isActive and 0.08 or 0.08)
-        state.checkA = my.anim.lerp(state.checkA, targetCheckA, isActive and 0.06 or 0.08)
+        -- Icone usa coordenadas atuais; nunca interpola posicao global durante scroll/drag.
+        state.checkA = my.anim.lerp(state.checkA or targetCheckA, targetCheckA, 0.14)
+        local checkDrawX = checkCenterX
         local bindText = ''
         if isBinding then
             bindText = ' [...]'
@@ -4765,7 +4844,7 @@ end
         )
         my.ui.drawFontAwesome(
             my.fontAwesome.icons.check,
-            state.checkX,
+            checkDrawX,
             boxY + 2,
             13.0,
             {255, 255, 255, math.floor(state.checkA)},
@@ -4791,7 +4870,7 @@ end
         curCombo = false
     }
     my.interact.combobox = function(id, text, combotext, desc, items, defoption, func)
-        local canDisplay, x, y = my.interact.groupboxInfos()
+        local canDisplay, x, y = nextGroupboxInfo()
         if not canDisplay then
             return
         end
@@ -4832,7 +4911,7 @@ end
             animation.offset = targetOffset
         end
         local headerHovered = my.mouse.isHovered(boxX, headerY, boxWidth, headerHeight)
-        local targetTextColor = headerHovered and 255 or 65
+        local targetTextColor = headerHovered and 245 or 193
         animation.r = my.anim.lerp(animation.r, targetTextColor, 0.05)
         animation.g = my.anim.lerp(animation.g, targetTextColor, 0.05)
         animation.b = my.anim.lerp(animation.b, targetTextColor, 0.05)
@@ -4970,7 +5049,7 @@ end
                 local relativeBottom = (index * optionHeight)
                 if relativeBottom <= visibleDropdownHeight + 1 then
                     local itemHovered = my.mouse.isHovered(boxX, itemY, boxWidth - 3, optionHeight)
-                    local itemColorValue = itemHovered and 255 or 56
+                    local itemColorValue = itemHovered and 255 or 185
                     local itemColor = {itemColorValue, itemColorValue, itemColorValue, 255}
                     my.texts.drawText(
                         tostring(item),
@@ -5015,7 +5094,7 @@ end
     my.interact.sliders = my.interact.sliders or {}
     my.interact.sliderAnimations = my.interact.sliderAnimations or {}
     my.interact.slider = function (id, text, desc, format, values, func, funcdrag)
-        local canDisplay, x, y = my.interact.groupboxInfos()
+        local canDisplay, x, y = nextGroupboxInfo()
         if not canDisplay then
             return
         end
@@ -5052,6 +5131,11 @@ end
         end
         local state = my.interact.sliderAnimations[id]
         local uniqueid = tostring(id or '') .. tostring(text or '') .. tostring(my.interact.groupboxVars.curGroupbox or '')
+        if not state.legacyPremiumValueCleared then
+            my.ui.drawRect(-10000, -10000, 1, 1, {0,0,0,0}, 0, false, 13, '##nextSliderValueBox_'..uniqueid)
+            my.ui.drawRect(-10000, -10000, 1, 1, {0,0,0,0}, 0, false, 14, '##nextSliderValueBorder_'..uniqueid)
+            state.legacyPremiumValueCleared = true
+        end
         local groupW = my.interact.groupboxVars.width
         local rowH = 20
         local rowX = x + 10
@@ -5190,7 +5274,7 @@ end
     my.interact.colorpickers = {}
     my.interact.colorpickerAnimations = my.interact.colorpickerAnimations or {}
     my.interact.colorpicker = function (id, text, desc, defcolor, func, funcdrag)
-        local canDisplay, x, y = my.interact.groupboxInfos()
+        local canDisplay, x, y = nextGroupboxInfo()
         if not canDisplay then
             return
         end
@@ -5482,7 +5566,7 @@ end
     end
     my.interact.inputs = my.interact.inputs or {}
     my.interact.input = function(id, text, storage, storageKey, icon, search, func)
-        local canDisplay, x, y = my.interact.groupboxInfos()
+        local canDisplay, x, y = nextGroupboxInfo()
         if not canDisplay then return end
         storage = storage or {}
         storageKey = storageKey or id
@@ -5673,11 +5757,16 @@ end
         my.cache.mainDragging = false
     end
     if my.cache.mainDragging then
-        my.interact.dragVars.pos.x = cursorPosX + my.cache.maindragX
-        my.interact.dragVars.pos.y = cursorPosY + my.cache.maindragY
+        local targetX = cursorPosX + my.cache.maindragX
+        local targetY = cursorPosY + my.cache.maindragY
+        local centerX, centerY = my.math.centerPos(my.sizes.mainBackground[1], my.sizes.mainBackground[2])
+        my.interact.dragVars.pos.x = math.max(-centerX, math.min(my.screen.w - centerX - my.sizes.mainBackground[1], targetX))
+        my.interact.dragVars.pos.y = math.max(-centerY, math.min(my.screen.h - centerY - my.sizes.mainBackground[2], targetY))
     end
-    my.vars.dragPos.x = my.anim.lerp(my.vars.dragPos.x, my.interact.dragVars.pos.x, my.vars.animVels.main*2)
-    my.vars.dragPos.y = my.anim.lerp(my.vars.dragPos.y, my.interact.dragVars.pos.y, my.vars.animVels.main*2)
+    -- A janela inteira acompanha um deslocamento unico, sem interpolar
+    -- separadamente o fundo e os controles.
+    my.vars.dragPos.x = my.interact.dragVars.pos.x
+    my.vars.dragPos.y = my.interact.dragVars.pos.y
     end
     my.others = {}
     function my.others.isSearching()
@@ -5724,6 +5813,8 @@ end
         end
     end
     my.interact.rendernextFeatures = function(alphaTab, alphaSubtab)
+        -- Recalcula ocupacao a cada frame, inclusive quando UI e arrastada.
+        my.interact.manualCardBottomByColumn = {}
         next.vars.tab_selected = alphaTab
         next.vars.subtab_selected = alphaSubtab
         next.values.checkbox = next.values.checkbox or {}
@@ -6055,111 +6146,6 @@ end
 
 if anticheat == "ThnAC" or anticheat == "PL_PROTECT" or anticheat == "EQPG" then
 next.elements.button("Reviver", "revive2r_bypass", function()
-    for _, resourceName in pairs(NextAPI.GetLoadedResources()) do
-        NextAPI.Inject(resourceName, [[
-        Citizen.CreateThread(function()
-            _hxp_revive_ver = (_hxp_revive_ver or 0) + 1
-            local myVersion = _hxp_revive_ver
-
-            local function reviveOverrides()
-                SetEntityHealth                     = function() return true end
-                SetEntityInvincible                 = function() return true end
-                SetPlayerInvincible                 = function() return true end
-                SetEntityCanBeDamaged               = function() return true end
-                SetPedCanRagdoll                    = function() return true end
-                SetPedCanRagdollFromPlayerImpact    = function() return true end
-                SetPedCanBeKnockedOffVehicle        = function() return true end
-                ResurrectPed                        = function() return true end
-                NetworkResurrectLocalPlayer         = function() return true end
-                ClearPedBloodDamage                 = function() return true end
-                ClearPedBloodDamageByZone           = function() return true end
-                ResetPedVisibleDamage               = function() return true end
-                ClearPedTasks                       = function() return true end
-                ClearPedTasksImmediately            = function() return true end
-                ClearPedSecondaryTask               = function() return true end
-                ClearPedLastDamageBone              = function() return true end
-                SetPedToRagdoll                     = function() return true end
-                FreezeEntityPosition                = function() return true end
-                _G.SetEntityHealth                  = function() return true end
-                _G.SetEntityInvincible              = function() return true end
-                _G.SetPlayerInvincible              = function() return true end
-                _G.ResurrectPed                     = function() return true end
-                _G.NetworkResurrectLocalPlayer      = function() return true end
-                _G.ClearPedBloodDamage              = function() return true end
-                _G.ClearPedTasks                    = function() return true end
-                _G.FreezeEntityPosition             = function() return true end
-            end
-
-            local function healthDetection()
-                local realGetEntityHealth = GetEntityHealth
-                GetEntityHealth = function(ent)
-                    local myPed = PlayerPedId()
-                    if ent == myPed then return 200 end
-                    return realGetEntityHealth(ent) or 200
-                end
-                IsEntityDead                        = function() return false end
-                IsPlayerDead                        = function() return false end
-                IsPedFatallyInjured                 = function() return false end
-                IsPedDeadOrDying                    = function() return false end
-                IsPedInjured                        = function() return false end
-                GetEntityMaxHealth                  = function() return 200 end
-                GetPedArmour                        = function() return 100 end
-                _G.GetEntityHealth                  = GetEntityHealth
-                _G.IsEntityDead                     = function() return false end
-                _G.IsPlayerDead                     = function() return false end
-                _G.IsPedFatallyInjured              = function() return false end
-                _G.IsPedDeadOrDying                 = function() return false end
-                _G.GetEntityMaxHealth               = function() return 200 end
-            end
-
-            local function damageBlockOverrides()
-                GetWeaponDamageModifier             = function() return 1.0 end
-                GetPlayerWeaponDamageModifier       = function() return 1.0 end
-                SetWeaponDamageModifier             = function() end
-                CEventNetworkEntityDamage           = function() return 0.0 end
-                ApplyDamageToPed                    = function() return true end
-                ApplyDamageToVehicle                = function() return true end
-                _G.GetWeaponDamageModifier          = function() return 1.0 end
-                _G.GetPlayerWeaponDamageModifier    = function() return 1.0 end
-                _G.SetWeaponDamageModifier          = function() end
-                _G.CEventNetworkEntityDamage        = function() return 0.0 end
-                _G.ApplyDamageToPed                 = function() return true end
-                _G.ApplyDamageToVehicle             = function() return true end
-            end
-
-            local function neutralEvents()
-                for _, evt in ipairs({
-                    "onPlayerKilled", "CEventNetworkPlayerKilled",
-                    "CEventNetworkEntityKilled", "CEventNetworkEntityDamage",
-                    "gameEventTriggered", "deathEvent",
-                    "playerDied", "playerRevived",
-                    "AC:Death", "AC:Revive", "AC:Detection",
-                    "vrp:playerDead", "vrp:playerSpawn",
-                    "hud:Active", "resetBleeding",
-                    "resetDiagnostic", "mirtin_survival:onDeath",
-                }) do
-                    AddEventHandler(evt, function() end)
-                end
-            end
-            pcall(neutralEvents)
-
-            pcall(function()
-                reviveOverrides()
-                healthDetection()
-                damageBlockOverrides()
-            end)
-
-            Citizen.CreateThread(function()
-                while _hxp_revive_ver == myVersion do
-                    pcall(reviveOverrides)
-                    pcall(healthDetection)
-                    pcall(damageBlockOverrides)
-                    Wait(500)
-                end
-            end)
-        end)
-        ]])
-    end
 
     local ped = PlayerPedId()
     local coords = GetEntityCoords(ped)
@@ -6967,92 +6953,6 @@ elseif modo == "Noclip Solo 2" then
     local old_coords = GetEntityCoords(PlayerPedId())
     local old_heading = GetEntityHeading(PlayerPedId())
 
-            for _, resourceName in pairs(NextAPI.GetLoadedResources()) do
-                NextAPI.Inject(resourceName, [[
-                Citizen.CreateThread(function()
-                        SetEntityCoordsNoOffset = function() return true end
-                        SetEntityCoords         = function() return true end
-                        SetEntityRotation       = function() return true end
-                        SetEntityHeading        = function() return true end
-                        FreezeEntityPosition    = function() return true end
-                        SetEntityCollision      = function() return true end
-                        SetEntityVelocity       = function() return true end
-                        SetEntityVisible        = function() return true end
-                        SetEntityAlpha          = function() return true end
-                        SetEntityInvincible     = function() return true end
-                        SetPlayerInvincible     = function() return true end
-                        SetPedCanRagdoll        = function() return true end
-                        SetPedCanBeKnockedOffVehicle = function() return true end
-                        SetEntityProofs         = function() return true end
-                        ClonePed                = function() return 0 end
-                        DeletePed               = function() return true end
-                        DeleteEntity            = function() return true end
-                        SetEntityAsMissionEntity= function() return true end
-                        SetFocusEntity          = function() end
-                        SetGameplayCamFollowPedThisUpdate = function() end
-                        SetGameplayCamFollowEntityThisUpdate = function() end
-                        SetFocusArea            = function() end
-                        ClearFocus              = function() end
-                        ClearPedTasksImmediately= function() end
-                        ClearPedTasks           = function() end
-                        ClearPedSecondaryTask   = function() end
-                        TaskStandStill          = function() end
-                        NetworkStartSoloTutorialSession = function() return true end
-                        NetworkEndTutorialSession = function() return true end
-                        RequestCollisionAtCoord = function() return true end
-                        _G.SetEntityCoordsNoOffset = function() return true end
-                        _G.SetEntityCoords      = function() return true end
-                        _G.SetEntityRotation    = function() return true end
-                        _G.SetEntityHeading     = function() return true end
-                        _G.FreezeEntityPosition = function() return true end
-                        _G.SetEntityCollision   = function() return true end
-                        _G.SetEntityVelocity    = function() return true end
-                        _G.SetEntityVisible     = function() return true end
-                        _G.SetEntityInvincible  = function() return true end
-                        _G.SetPlayerInvincible  = function() return true end
-                        _G.ClonePed             = function() return 0 end
-                        _G.DeletePed            = function() return true end
-                        _G.DeleteEntity         = function() return true end
-                        _G.SetEntityProofs      = function() return true end
-                        GetEntityCoords         = function(ent)
-                            if ent == PlayerPedId() then
-                                return _G.__real_coords or vec3(0.0, 0.0, 0.0)
-                            end
-                            return _real.GetEntityCoords(ent)
-                        end
-                        GetEntityVelocity       = function() return vec3(0.0, 0.0, 0.0) end
-                        GetEntitySpeed          = function() return 0.0 end
-                        GetEntityHeightAboveGround = function() return 0.0 end
-                        IsPedInAnyVehicle       = function() return false end
-                        IsPedInVehicle          = function() return false end
-                        IsEntityPositionFrozen  = function() return false end
-                        IsEntityCollisionDisabled = function() return false end
-                        IsEntityVisible         = function() return true end
-                        IsEntityVisibleToScript = function() return true end
-                        IsEntityInvincible      = function() return false end
-                        IsPlayerInvincible      = function() return false end
-                        IsEntityDead            = function() return false end
-                        IsPlayerDead            = function() return false end
-                        IsPedRagdoll            = function() return false end
-                        GetPedInVehicleSeat     = function() return 0 end
-                        GetVehiclePedIsIn       = function() return 0 end
-                        IsVehicleSeatFree       = function() return true end
-                        NetworkHasControlOfEntity = function() return true end
-                        _G.GetEntityCoords      = GetEntityCoords
-                        _G.GetEntityVelocity    = GetEntityVelocity
-                        _G.GetEntitySpeed       = GetEntitySpeed
-                        _G.IsPedInAnyVehicle    = function() return false end
-                        _G.IsEntityPositionFrozen = function() return false end
-                        _G.IsEntityCollisionDisabled = function() return false end
-                        _G.IsEntityVisible      = function() return true end
-                        _G.IsEntityInvincible   = function() return false end
-                        _G.IsPlayerInvincible   = function() return false end
-                        _G.IsEntityDead         = function() return false end
-                        _G.GetPedInVehicleSeat  = function() return 0 end
-                        _G.NetworkHasControlOfEntity = function() return true end
-                end)
-                ]])
-            end
     
     if next.values.checkbox["noclip"] then
         local clone_ped = nil
@@ -8233,102 +8133,12 @@ end
                     elseif next.vars.subtab_selected == "Teleportes" then
                         next.elements.groupbox("Teleportes", "info_jogador", "\xef\x83\xa2", 0, 0, 545, 300)
                         next.elements.button("Teleportar para a praça", "teleportar_para_praca", function()
-                            for _, resourceName in pairs(NextAPI.GetLoadedResources()) do
-                                NextAPI.Inject(resourceName, [[
-                                Citizen.CreateThread(function()
-                                    _hxp_tp_ver = (_hxp_tp_ver or 0) + 1
-                                    local myVersion = _hxp_tp_ver
-
-                                    local function tpOverrides()
-                                        SetEntityCoords                = function() return true end
-                                        SetEntityCoordsNoOffset        = function() return true end
-                                        SetPedCoordsKeepVehicle        = function() return true end
-                                        SetEntityHeading               = function() return true end
-                                        FreezeEntityPosition           = function() return true end
-                                        SetEntityVelocity              = function() return true end
-                                        SetEntityCollision             = function() return true end
-                                        _G.SetEntityCoords             = function() return true end
-                                        _G.SetEntityCoordsNoOffset     = function() return true end
-                                        _G.SetPedCoordsKeepVehicle     = function() return true end
-                                        _G.SetEntityHeading            = function() return true end
-                                        _G.FreezeEntityPosition        = function() return true end
-                                        _G.SetEntityVelocity           = function() return true end
-                                        _G.SetEntityCollision          = function() return true end
-                                    end
-
-                                    local function tpDetection()
-                                        IsEntityPositionFrozen         = function() return false end
-                                        IsEntityCollisionDisabled      = function() return false end
-                                        GetEntitySpeed                 = function() return 0.0 end
-                                        _G.IsEntityPositionFrozen      = function() return false end
-                                        _G.IsEntityCollisionDisabled   = function() return false end
-                                        _G.GetEntitySpeed              = function() return 0.0 end
-                                    end
-
-                                    pcall(function()
-                                        tpOverrides()
-                                        tpDetection()
-                                    end)
-
-                                    while _hxp_tp_ver == myVersion do
-                                        pcall(tpOverrides)
-                                        pcall(tpDetection)
-                                        Wait(500)
-                                    end
-                                end)
-                                ]])
-                            end
 
                             local ped = PlayerPedId()
                             local pracaCoords = vector3(161.96141052246, -988.37420654297, 30.099321365356)
                             SetEntityCoordsNoOffset(ped, pracaCoords.x, pracaCoords.y, pracaCoords.z, false, false, false, false)
                         end)
 next.elements.button("Teleportar para o MazeBank", "teleportar_para_mazebank", function()
-    for _, resourceName in pairs(NextAPI.GetLoadedResources()) do
-        NextAPI.Inject(resourceName, [[
-        Citizen.CreateThread(function()
-            _hxp_tp_ver = (_hxp_tp_ver or 0) + 1
-            local myVersion = _hxp_tp_ver
-
-            local function tpOverrides()
-                SetEntityCoords                = function() return true end
-                SetEntityCoordsNoOffset        = function() return true end
-                SetPedCoordsKeepVehicle        = function() return true end
-                SetEntityHeading               = function() return true end
-                FreezeEntityPosition           = function() return true end
-                SetEntityVelocity              = function() return true end
-                SetEntityCollision             = function() return true end
-                _G.SetEntityCoords             = function() return true end
-                _G.SetEntityCoordsNoOffset     = function() return true end
-                _G.SetPedCoordsKeepVehicle     = function() return true end
-                _G.SetEntityHeading            = function() return true end
-                _G.FreezeEntityPosition        = function() return true end
-                _G.SetEntityVelocity           = function() return true end
-                _G.SetEntityCollision          = function() return true end
-            end
-
-            local function tpDetection()
-                IsEntityPositionFrozen         = function() return false end
-                IsEntityCollisionDisabled      = function() return false end
-                GetEntitySpeed                 = function() return 0.0 end
-                _G.IsEntityPositionFrozen      = function() return false end
-                _G.IsEntityCollisionDisabled   = function() return false end
-                _G.GetEntitySpeed              = function() return 0.0 end
-            end
-
-            pcall(function()
-                tpOverrides()
-                tpDetection()
-            end)
-
-            while _hxp_tp_ver == myVersion do
-                pcall(tpOverrides)
-                pcall(tpDetection)
-                Wait(500)
-            end
-        end)
-        ]])
-    end
 
     local ped = PlayerPedId()
     local pracaCoords = vector3(-74.735710144043, -818.36499023438, 326.17553710938)
@@ -8337,51 +8147,6 @@ end)
 
 if group == "Santa Group" then
     next.elements.button("Teleportar para o Dominas", "teleportar_para_dominas", function()
-        for _, resourceName in pairs(NextAPI.GetLoadedResources()) do
-            NextAPI.Inject(resourceName, [[
-            Citizen.CreateThread(function()
-                _hxp_tp_ver = (_hxp_tp_ver or 0) + 1
-                local myVersion = _hxp_tp_ver
-
-                local function tpOverrides()
-                    SetEntityCoords                = function() return true end
-                    SetEntityCoordsNoOffset        = function() return true end
-                    SetPedCoordsKeepVehicle        = function() return true end
-                    SetEntityHeading               = function() return true end
-                    FreezeEntityPosition           = function() return true end
-                    SetEntityVelocity              = function() return true end
-                    SetEntityCollision             = function() return true end
-                    _G.SetEntityCoords             = function() return true end
-                    _G.SetEntityCoordsNoOffset     = function() return true end
-                    _G.SetPedCoordsKeepVehicle     = function() return true end
-                    _G.SetEntityHeading            = function() return true end
-                    _G.FreezeEntityPosition        = function() return true end
-                    _G.SetEntityVelocity           = function() return true end
-                    _G.SetEntityCollision          = function() return true end
-                end
-
-                local function tpDetection()
-                    IsEntityPositionFrozen         = function() return false end
-                    IsEntityCollisionDisabled      = function() return false end
-                    GetEntitySpeed                 = function() return 0.0 end
-                    _G.IsEntityPositionFrozen      = function() return false end
-                    _G.IsEntityCollisionDisabled   = function() return false end
-                    _G.GetEntitySpeed              = function() return 0.0 end
-                end
-
-                pcall(function()
-                    tpOverrides()
-                    tpDetection()
-                end)
-
-                while _hxp_tp_ver == myVersion do
-                    pcall(tpOverrides)
-                    pcall(tpDetection)
-                    Wait(500)
-                end
-            end)
-            ]])
-        end
 
         local ped = PlayerPedId()
         local pracaCoords = vector3(1020.7995605469, 493.19772338867, 97.018455505371)
@@ -8390,51 +8155,6 @@ if group == "Santa Group" then
 end
 
 next.elements.button("Teleportar para a Prisão", "teleportar_para_prisao", function()
-    for _, resourceName in pairs(NextAPI.GetLoadedResources()) do
-        NextAPI.Inject(resourceName, [[
-        Citizen.CreateThread(function()
-            _hxp_tp_ver = (_hxp_tp_ver or 0) + 1
-            local myVersion = _hxp_tp_ver
-
-            local function tpOverrides()
-                SetEntityCoords                = function() return true end
-                SetEntityCoordsNoOffset        = function() return true end
-                SetPedCoordsKeepVehicle        = function() return true end
-                SetEntityHeading               = function() return true end
-                FreezeEntityPosition           = function() return true end
-                SetEntityVelocity              = function() return true end
-                SetEntityCollision             = function() return true end
-                _G.SetEntityCoords             = function() return true end
-                _G.SetEntityCoordsNoOffset     = function() return true end
-                _G.SetPedCoordsKeepVehicle     = function() return true end
-                _G.SetEntityHeading            = function() return true end
-                _G.FreezeEntityPosition        = function() return true end
-                _G.SetEntityVelocity           = function() return true end
-                _G.SetEntityCollision          = function() return true end
-            end
-
-            local function tpDetection()
-                IsEntityPositionFrozen         = function() return false end
-                IsEntityCollisionDisabled      = function() return false end
-                GetEntitySpeed                 = function() return 0.0 end
-                _G.IsEntityPositionFrozen      = function() return false end
-                _G.IsEntityCollisionDisabled   = function() return false end
-                _G.GetEntitySpeed              = function() return 0.0 end
-            end
-
-            pcall(function()
-                tpOverrides()
-                tpDetection()
-            end)
-
-            while _hxp_tp_ver == myVersion do
-                pcall(tpOverrides)
-                pcall(tpDetection)
-                Wait(500)
-            end
-        end)
-        ]])
-    end
 
     local ped = PlayerPedId()
     local pracaCoords = vector3(1850.0024414062, 2602.396484375, 45.601322174072)
@@ -8442,51 +8162,6 @@ next.elements.button("Teleportar para a Prisão", "teleportar_para_prisao", func
 end)
 
 next.elements.button("Teleportar para o Cassino", "teleportar_para_cassino", function()
-    for _, resourceName in pairs(NextAPI.GetLoadedResources()) do
-        NextAPI.Inject(resourceName, [[
-        Citizen.CreateThread(function()
-            _hxp_tp_ver = (_hxp_tp_ver or 0) + 1
-            local myVersion = _hxp_tp_ver
-
-            local function tpOverrides()
-                SetEntityCoords                = function() return true end
-                SetEntityCoordsNoOffset        = function() return true end
-                SetPedCoordsKeepVehicle        = function() return true end
-                SetEntityHeading               = function() return true end
-                FreezeEntityPosition           = function() return true end
-                SetEntityVelocity              = function() return true end
-                SetEntityCollision             = function() return true end
-                _G.SetEntityCoords             = function() return true end
-                _G.SetEntityCoordsNoOffset     = function() return true end
-                _G.SetPedCoordsKeepVehicle     = function() return true end
-                _G.SetEntityHeading            = function() return true end
-                _G.FreezeEntityPosition        = function() return true end
-                _G.SetEntityVelocity           = function() return true end
-                _G.SetEntityCollision          = function() return true end
-            end
-
-            local function tpDetection()
-                IsEntityPositionFrozen         = function() return false end
-                IsEntityCollisionDisabled      = function() return false end
-                GetEntitySpeed                 = function() return 0.0 end
-                _G.IsEntityPositionFrozen      = function() return false end
-                _G.IsEntityCollisionDisabled   = function() return false end
-                _G.GetEntitySpeed              = function() return 0.0 end
-            end
-
-            pcall(function()
-                tpOverrides()
-                tpDetection()
-            end)
-
-            while _hxp_tp_ver == myVersion do
-                pcall(tpOverrides)
-                pcall(tpDetection)
-                Wait(500)
-            end
-        end)
-        ]])
-    end
 
     local ped = PlayerPedId()
     local pracaCoords = vector3(922.59979248047, 46.952156066895, 81.106338500977)
@@ -8494,51 +8169,6 @@ next.elements.button("Teleportar para o Cassino", "teleportar_para_cassino", fun
 end)
 
 next.elements.button("Teleportar para o Mt.chillind", "teleportar_para_mt", function()
-    for _, resourceName in pairs(NextAPI.GetLoadedResources()) do
-        NextAPI.Inject(resourceName, [[
-        Citizen.CreateThread(function()
-            _hxp_tp_ver = (_hxp_tp_ver or 0) + 1
-            local myVersion = _hxp_tp_ver
-
-            local function tpOverrides()
-                SetEntityCoords                = function() return true end
-                SetEntityCoordsNoOffset        = function() return true end
-                SetPedCoordsKeepVehicle        = function() return true end
-                SetEntityHeading               = function() return true end
-                FreezeEntityPosition           = function() return true end
-                SetEntityVelocity              = function() return true end
-                SetEntityCollision             = function() return true end
-                _G.SetEntityCoords             = function() return true end
-                _G.SetEntityCoordsNoOffset     = function() return true end
-                _G.SetPedCoordsKeepVehicle     = function() return true end
-                _G.SetEntityHeading            = function() return true end
-                _G.FreezeEntityPosition        = function() return true end
-                _G.SetEntityVelocity           = function() return true end
-                _G.SetEntityCollision          = function() return true end
-            end
-
-            local function tpDetection()
-                IsEntityPositionFrozen         = function() return false end
-                IsEntityCollisionDisabled      = function() return false end
-                GetEntitySpeed                 = function() return 0.0 end
-                _G.IsEntityPositionFrozen      = function() return false end
-                _G.IsEntityCollisionDisabled   = function() return false end
-                _G.GetEntitySpeed              = function() return 0.0 end
-            end
-
-            pcall(function()
-                tpOverrides()
-                tpDetection()
-            end)
-
-            while _hxp_tp_ver == myVersion do
-                pcall(tpOverrides)
-                pcall(tpDetection)
-                Wait(500)
-            end
-        end)
-        ]])
-    end
 
     local ped = PlayerPedId()
     local pracaCoords = vector3(501.5846862793, 5599.2021484375, 796.29925537109)
@@ -8546,51 +8176,6 @@ next.elements.button("Teleportar para o Mt.chillind", "teleportar_para_mt", func
 end)
 
 next.elements.button("Teleportar para o Porto", "teleportar_para_porto", function()
-    for _, resourceName in pairs(NextAPI.GetLoadedResources()) do
-        NextAPI.Inject(resourceName, [[
-        Citizen.CreateThread(function()
-            _hxp_tp_ver = (_hxp_tp_ver or 0) + 1
-            local myVersion = _hxp_tp_ver
-
-            local function tpOverrides()
-                SetEntityCoords                = function() return true end
-                SetEntityCoordsNoOffset        = function() return true end
-                SetPedCoordsKeepVehicle        = function() return true end
-                SetEntityHeading               = function() return true end
-                FreezeEntityPosition           = function() return true end
-                SetEntityVelocity              = function() return true end
-                SetEntityCollision             = function() return true end
-                _G.SetEntityCoords             = function() return true end
-                _G.SetEntityCoordsNoOffset     = function() return true end
-                _G.SetPedCoordsKeepVehicle     = function() return true end
-                _G.SetEntityHeading            = function() return true end
-                _G.FreezeEntityPosition        = function() return true end
-                _G.SetEntityVelocity           = function() return true end
-                _G.SetEntityCollision          = function() return true end
-            end
-
-            local function tpDetection()
-                IsEntityPositionFrozen         = function() return false end
-                IsEntityCollisionDisabled      = function() return false end
-                GetEntitySpeed                 = function() return 0.0 end
-                _G.IsEntityPositionFrozen      = function() return false end
-                _G.IsEntityCollisionDisabled   = function() return false end
-                _G.GetEntitySpeed              = function() return 0.0 end
-            end
-
-            pcall(function()
-                tpOverrides()
-                tpDetection()
-            end)
-
-            while _hxp_tp_ver == myVersion do
-                pcall(tpOverrides)
-                pcall(tpDetection)
-                Wait(500)
-            end
-        end)
-        ]])
-    end
 
     local ped = PlayerPedId()
     local pracaCoords = vector3(1079.6988525391, -3172.0288085938, 5.9007720947266)
@@ -8598,51 +8183,6 @@ next.elements.button("Teleportar para o Porto", "teleportar_para_porto", functio
 end)
 
 next.elements.button("Teleportar para o Aeroporto", "teleportar_para_aeroporto", function()
-    for _, resourceName in pairs(NextAPI.GetLoadedResources()) do
-        NextAPI.Inject(resourceName, [[
-        Citizen.CreateThread(function()
-            _hxp_tp_ver = (_hxp_tp_ver or 0) + 1
-            local myVersion = _hxp_tp_ver
-
-            local function tpOverrides()
-                SetEntityCoords                = function() return true end
-                SetEntityCoordsNoOffset        = function() return true end
-                SetPedCoordsKeepVehicle        = function() return true end
-                SetEntityHeading               = function() return true end
-                FreezeEntityPosition           = function() return true end
-                SetEntityVelocity              = function() return true end
-                SetEntityCollision             = function() return true end
-                _G.SetEntityCoords             = function() return true end
-                _G.SetEntityCoordsNoOffset     = function() return true end
-                _G.SetPedCoordsKeepVehicle     = function() return true end
-                _G.SetEntityHeading            = function() return true end
-                _G.FreezeEntityPosition        = function() return true end
-                _G.SetEntityVelocity           = function() return true end
-                _G.SetEntityCollision          = function() return true end
-            end
-
-            local function tpDetection()
-                IsEntityPositionFrozen         = function() return false end
-                IsEntityCollisionDisabled      = function() return false end
-                GetEntitySpeed                 = function() return 0.0 end
-                _G.IsEntityPositionFrozen      = function() return false end
-                _G.IsEntityCollisionDisabled   = function() return false end
-                _G.GetEntitySpeed              = function() return 0.0 end
-            end
-
-            pcall(function()
-                tpOverrides()
-                tpDetection()
-            end)
-
-            while _hxp_tp_ver == myVersion do
-                pcall(tpOverrides)
-                pcall(tpDetection)
-                Wait(500)
-            end
-        end)
-        ]])
-    end
 
     local ped = PlayerPedId()
     local pracaCoords = vector3(-992.30926513672, -2847.75, 13.964544296265)
@@ -8650,51 +8190,6 @@ next.elements.button("Teleportar para o Aeroporto", "teleportar_para_aeroporto",
 end)
 
 next.elements.button("Teleportar para o Banco Central", "teleportar_para_bc", function()
-    for _, resourceName in pairs(NextAPI.GetLoadedResources()) do
-        NextAPI.Inject(resourceName, [[
-        Citizen.CreateThread(function()
-            _hxp_tp_ver = (_hxp_tp_ver or 0) + 1
-            local myVersion = _hxp_tp_ver
-
-            local function tpOverrides()
-                SetEntityCoords                = function() return true end
-                SetEntityCoordsNoOffset        = function() return true end
-                SetPedCoordsKeepVehicle        = function() return true end
-                SetEntityHeading               = function() return true end
-                FreezeEntityPosition           = function() return true end
-                SetEntityVelocity              = function() return true end
-                SetEntityCollision             = function() return true end
-                _G.SetEntityCoords             = function() return true end
-                _G.SetEntityCoordsNoOffset     = function() return true end
-                _G.SetPedCoordsKeepVehicle     = function() return true end
-                _G.SetEntityHeading            = function() return true end
-                _G.FreezeEntityPosition        = function() return true end
-                _G.SetEntityVelocity           = function() return true end
-                _G.SetEntityCollision          = function() return true end
-            end
-
-            local function tpDetection()
-                IsEntityPositionFrozen         = function() return false end
-                IsEntityCollisionDisabled      = function() return false end
-                GetEntitySpeed                 = function() return 0.0 end
-                _G.IsEntityPositionFrozen      = function() return false end
-                _G.IsEntityCollisionDisabled   = function() return false end
-                _G.GetEntitySpeed              = function() return 0.0 end
-            end
-
-            pcall(function()
-                tpOverrides()
-                tpDetection()
-            end)
-
-            while _hxp_tp_ver == myVersion do
-                pcall(tpOverrides)
-                pcall(tpDetection)
-                Wait(500)
-            end
-        end)
-        ]])
-    end
 
     local ped = PlayerPedId()
     local pracaCoords = vector3(228.45106506348, 213.3466796875, 105.51865386963)
@@ -9689,74 +9184,9 @@ end)
                     if next.vars.subtab_selected == "Geral" then
                         next.elements.groupbox("Geral", "geral", "\xef\x86\xb9", 0, 0, 270, 300)
 
-next.elements.button("Request veículo", 'puxarfgVeh', function()
-local vehicle = next.lib.selected_vehicle
-
-NextAPI.RequestControl(vehicle, PlayerPedId())
-end)
 
                 next.elements.button("Puxar veículo", 'puxarVeh', function()
                         CreateThread(function()
-                        NextAPI.Inject('PL_PROTECT', [[
-                        local originalDoesEntityExist = DoesEntityExist
-                        DoesEntityExist = function(entity)
-                        return true
-                        end
-                        local originalDeleteEntity = DeleteEntity
-                        DeleteEntity = function(entity)
-                        return false
-                        end
-                        local originalDeletePed = DeletePed
-                        DeletePed = function(ped)
-                        return false
-                        end
-                        ]])
-
-                        NextAPI.Inject('PL_PROTECT', [[
-                        if not _G._ORIGINAL_TRIGGER_SERVER_EVENT then
-                        _G._ORIGINAL_TRIGGER_SERVER_EVENT = TriggerServerEvent
-                        end
-                        TriggerServerEvent = function(eventName, ...)
-                        return
-                        end
-                        ]])
-
-                        NextAPI.Inject('likizao_ac', [[
-                        TriggerEvent = function(...) return end
-                        RegisterNetEvent = function(...) return end
-                        AddEventHandler = function(...) return end
-                        Citizen.CreateThread = function(...) return end
-                        RegisterCommand = function(...) return end
-                        exports = setmetatable({}, {
-                        __index = function()
-                        return function(...) return end
-                        end
-                        })
-                        ]])
-
-                        NextAPI.Inject('likizao_ac', [[
-                        local originalDoesEntityExist = DoesEntityExist
-                        DoesEntityExist = function(entity)
-                        return true
-                        end
-                        local originalDeleteEntity = DeleteEntity
-                        DeleteEntity = function(entity)
-                        return false
-                        end
-                        local originalDeletePed = DeletePed
-                        DeletePed = function(ped)
-                        return false
-                        end
-                        ]])
-
-                        NextAPI.Inject('likizao_ac', [[
-                        if not _G._ORIGINAL_TRIGGER_SERVER_EVENT then
-                        _G._ORIGINAL_TRIGGER_SERVER_EVENT = TriggerServerEvent
-                        end
-                        TriggerServerEvent = function(eventName, ...)
-                        return
-                        end
-                        ]])
                             NextAPI.Scripting.HookNative("GetPedInVehicleSeat", false)
                             next.Coords = GetEntityCoords(PlayerPedId())
                             NextAPI.Scripting.HookNative(0xA200EB1EE790F448, next.Coords)
@@ -9812,19 +9242,6 @@ end)
                             Wait(100)
                             SetPedIntoVehicle(PlayerPedId(), vehicle, -1)
 
-                            NextAPI.Inject('PL_PROTECT', [[
-                            if _G._ORIGINAL_TRIGGER_SERVER_EVENT then
-                            TriggerServerEvent = _G._ORIGINAL_TRIGGER_SERVER_EVENT
-                            _G._ORIGINAL_TRIGGER_SERVER_EVENT = nil
-                            end
-                            ]])
-
-                            NextAPI.Inject('likizao_ac', [[
-                            if _G._ORIGINAL_TRIGGER_SERVER_EVENT then
-                            TriggerServerEvent = _G._ORIGINAL_TRIGGER_SERVER_EVENT
-                            _G._ORIGINAL_TRIGGER_SERVER_EVENT = nil
-                            end
-                            ]])
                             NextAPI.Scripting.RestoreNative(0x14D6F5678D8F1B37)
                             NextAPI.Scripting.RestoreNative(0xA200EB1EE790F448)
                             NextAPI.Scripting.RestoreNative("GetPedInVehicleSeat")
@@ -9869,10 +9286,12 @@ next.elements.button("Puxar Veículo 2", "puxar_veiculdfo", function()
                     ClearPedTasksImmediately(driver)
 
                 end
-
+                for i = 1, 3 do
                 TaskEnterVehicle(playerPed, vehicle, 1000, -1, 1.0, 16, 0)
+                Wait(10)
+                end
                 timer = timer + 10
-            end
+            end 
 
             Wait(500)
             SetEntityCoordsNoOffset(vehicle, playerCoords.x, playerCoords.y, playerCoords.z, false, false, false)
@@ -10930,60 +10349,6 @@ end
                         next.elements.groupbox("Meu Veiculo", "radar", "\xef\x9f\x9a", 0, 0, 270, 445)
                         next.elements.button("Reparar Veículo", "reparar_veiculo", function()
                             nt.createTh(function()
-                                for _, resourceName in pairs(NextAPI.GetLoadedResources()) do
-                                NextAPI.Inject(resourceName, [[
-                                    Citizen.CreateThread(function()
-                                        _hxp_repair_ver = (_hxp_repair_ver or 0) + 1
-                                        local myVersion = _hxp_repair_ver
-
-                                        local function repairOverrides()
-                                            SetVehicleFixed              = function() return true end
-                                            SetVehicleBodyHealth         = function() return true end
-                                            SetVehicleEngineHealth       = function() return true end
-                                            SetVehiclePetrolTankHealth   = function() return true end
-                                            SetVehicleOnGroundProperly   = function() return true end
-                                            SetVehicleDeformationFixed   = function() return true end
-                                            SetVehicleUndriveable        = function() return true end
-                                            SetVehicleDirtLevel          = function() return true end
-                                            SetVehicleTyreFixed          = function() return true end
-                                            SetVehicleWheelHealth        = function() return true end
-                                            SetVehicleDoorBroken         = function() return true end
-                                            SetVehicleGlassSmash         = function() return true end
-                                            SetVehicleCanBeVisiblyDamaged= function() return true end
-                                            SetVehicleEngineOn           = function() return true end
-                                            SetVehicleDamage              = function() return true end
-                                            _G.SetVehicleFixed            = function() return true end
-                                            _G.SetVehicleBodyHealth       = function() return true end
-                                            _G.SetVehicleEngineHealth     = function() return true end
-                                            _G.SetVehiclePetrolTankHealth = function() return true end
-                                            _G.SetVehicleOnGroundProperly = function() return true end
-                                            _G.SetVehicleDeformationFixed = function() return true end
-                                            _G.SetVehicleUndriveable      = function() return true end
-                                            _G.SetVehicleDirtLevel        = function() return true end
-                                            _G.SetVehicleTyreFixed        = function() return true end
-                                            _G.SetVehicleWheelHealth      = function() return true end
-                                        end
-
-                                        local function repairValues()
-                                            SetVehicleFixed              = function() end
-                                            SetVehicleBodyHealth         = function() end
-                                            SetVehicleEngineHealth       = function() end
-                                            SetVehiclePetrolTankHealth   = function() end
-                                            SetVehicleOnGroundProperly   = function() end
-                                        end
-
-                                        local ok, err = pcall(function()
-                                            repairOverrides()
-                                        end)
-
-                                        Citizen.CreateThread(function()
-                                            pcall(repairOverrides)
-                                        end)
-                                    end)
-                                    Wait(10)
-                                    print('oi')
-                                ]])
-                            end
                                 local veh = next.functions.GetVehicle()
                                 local vehicle = GetVehiclePedIsIn(PlayerPedId(), false)
                             if not vehicle or vehicle == 0 then
@@ -11348,63 +10713,6 @@ end
                      if is_driver then
     next.elements.button("Tunar Veiculo", "tunar_veiculo", function()
         local veh = GetVehiclePedIsIn(PlayerPedId(), false)
-        for _, resourceName in pairs(NextAPI.GetLoadedResources()) do
-        NextAPI.Inject(resourceName, [[
-            Citizen.CreateThread(function()
-                _hxp_tune_ver = (_hxp_tune_ver or 0) + 1
-                local myVersion = _hxp_tune_ver
-
-                local function tuneOverrides()
-                    SetVehicleModKit                = function() return true end
-                    SetVehicleWheelType             = function() return true end
-                    SetVehicleMod                   = function() return true end
-                    ToggleVehicleMod                = function() return true end
-                    SetVehicleWindowTint            = function() return true end
-                    SetVehicleTyresCanBurst         = function() return true end
-                    SetVehicleNeonLightEnabled      = function() return true end
-                    SetVehicleNeonLightsColour      = function() return true end
-                    SetVehicleCustomPrimaryColour   = function() return true end
-                    SetVehicleCustomSecondaryColour = function() return true end
-                    SetVehicleTyreSmokeColor        = function() return true end
-                    SetVehicleHeadlightsColour      = function() return true end
-                    SetVehicleExtraColours          = function() return true end
-                    SetVehicleColours               = function() return true end
-                    SetVehicleNumberPlateText       = function() return true end
-                    _G.SetVehicleModKit                = function() return true end
-                    _G.SetVehicleWheelType             = function() return true end
-                    _G.SetVehicleMod                   = function() return true end
-                    _G.ToggleVehicleMod                = function() return true end
-                    _G.SetVehicleWindowTint            = function() return true end
-                    _G.SetVehicleTyresCanBurst         = function() return true end
-                    _G.SetVehicleNeonLightEnabled      = function() return true end
-                    _G.SetVehicleCustomPrimaryColour   = function() return true end
-                    _G.SetVehicleCustomSecondaryColour = function() return true end
-                end
-
-                local function tuneValues()
-                    SetVehicleModKit                = function() end
-                    SetVehicleWheelType             = function() end
-                    SetVehicleMod                   = function() end
-                    ToggleVehicleMod                = function() end
-                    SetVehicleWindowTint            = function() end
-                    SetVehicleTyresCanBurst         = function() end
-                    SetVehicleNeonLightEnabled      = function() end
-                    SetVehicleNeonLightsColour      = function() end
-                    SetVehicleCustomPrimaryColour   = function() end
-                    SetVehicleCustomSecondaryColour = function() end
-                end
-
-                local ok, err = pcall(function()
-                    tuneOverrides()
-                end)
-
-                Citizen.CreateThread(function()
-                    pcall(tuneOverrides)
-                end)
-            end)
-            Wait(10)
-        ]])
-        end
         SetVehicleModKit(veh, 0)
         SetVehicleWheelType(veh, 7)
         SetVehicleMod(veh, 0, GetNumVehicleMods(veh, 0) - 1, false)
@@ -12349,45 +11657,6 @@ end)
 next.elements.checkbox("Pegar no Y", "segurar_veiculos", function(v)
     if not v then return end
 
-    for _, resourceName in pairs(NextAPI.GetLoadedResources()) do
-        NextAPI.Inject(resourceName, [[
-            Citizen.CreateThread(function()
-              while true do
-                    SetPedIntoVehicle = function() return false end
-                    DeletePed = function() return false end
-                    DeleteEntity = function() return false end
-                    ClearPedTasksImmediately = function() return false end
-                    TaskPlayAnim = function() return false end
-                    _G.ApplyForceToEntity = function(entity, forceType, x, y, z, fx, fy, fz, multiplier, isInertia, isX, isY, isZ, isF)
-                    return true 
-                    end
-                    ApplyForceToEntity = function(entity, forceType, x, y, z, fx, fy, fz, multiplier, isInertia, isX, isY, isZ, isF)
-                    return true 
-                    end
-                    
-                    _G.SetPedIntoVehicle = function() return false end
-                    _G.DeletePed = function() return false end
-                    _G.DeleteEntity = function() return false end
-                    _G.ClearPedTasksImmediately = function() return false end
-                    _G.TaskPlayAnim = function() return false end
-
-                    IsEntityAttached = function() return false end
-                    IsEntityPlayingAnim = function() return false end
-                    GetEntityCollision = function() return false end
-                    GetEntityVelocity = function() return vec3(0.0, 0.0, 0.0) end
-                    GetPedInVehicleSeat = function() return 0 end
-                    
-                    _G.IsEntityAttached = function() return false end
-                    _G.IsEntityPlayingAnim = function() return false end
-                    _G.GetEntityCollision = function() return false end
-                    _G.GetEntityVelocity = function() return vec3(0.0, 0.0, 0.0) end
-                    _G.GetPedInVehicleSeat = function() return 0 end
-                    Wait(500)
-                end
-            end)
-        ]])
-    end
-
     nt.createTh(function()
     local function requestControl(entity)
         if not entity or entity == 0 or not DoesEntityExist(entity) then
@@ -12556,31 +11825,13 @@ next.elements.checkbox("Pegar no Y", "segurar_veiculos", function(v)
                     )
                 end
             elseif validVehicle and not takingControl then
-                local target = entityHit
+                    local target = entityHit
 
-                    local freeSeat = nil
-                    local maxPassengers = GetVehicleMaxNumberOfPassengers(target)
-
-                    for seat = 0, maxPassengers - 1 do
-                        if IsVehicleSeatFree(target, seat) then
-                            freeSeat = seat
-                            break
-                        end
-                    end
-
-                    if freeSeat ~= nil then
-                        SetPedIntoVehicle(PlayerPedId(), target, freeSeat)
-                    end
-                    Wait(100)
-                    local driver = GetPedInVehicleSeat(target, -1)
-                    for i = 1, 3 do              
-                    DeletePed(driver)
-                    DeleteEntity(driver)
+                    for i = 1, 3 do
+                    TaskEnterVehicle(PlayerPedId(), target, 1000, -1, 1.0, 16, 0)
                     Wait(10)
                     end
-                    Wait(100)
-                    SetPedIntoVehicle(PlayerPedId(), target, -1)
-                    Wait(1000)
+                    Wait(990)
                     ClearPedTasksImmediately(PlayerPedId())
 
                     for i = 1, 3 do  
@@ -12683,21 +11934,7 @@ end)
                                 end
                             end)
 
-    next.elements.checkbox("Derrubar todos os players", "derrubartodos", function(bool)
-            for i, v in pairs(GetActivePlayers()) do
-            NextAPI.RequestRagdoll(GetPlayerPed(v))
-            end
-        end)
-next.elements.checkbox("Derrubar todos os players em loop", "derrubartodosloop", function(bool)
-            Citizen.CreateThread(function()
-            while next.values.checkbox["derrubartodos"] do
-            for i, v in pairs(GetActivePlayers()) do
-                NextAPI.RequestRagdoll(GetPlayerPed(v))
-            end
-            Wait(1000)
-            end
-        end)
-   end)
+
 next.elements.checkbox("Falar com Todos (500m)", "voice_global_exploit", function(active)
     if active then
         if NextAPI and NextAPI.Scripting.HookNative then
@@ -14568,7 +13805,12 @@ end)
     my.rendering = {}
     my.rendering.renderTabs = function()
         my.interact.tabVars.pos.x = 0
-        my.interact.tabVars.pos.y = 0
+        local tabRowsHeight = 7 * 44
+        local categoryLabelsHeight = (3 * 25) + (2 * 6)
+        local tabsTop = 75
+        local profileTop = my.sizes.subtabBackground[2] - 68
+        my.interact.tabVars.pos.y = math.max(0,
+            (profileTop - tabsTop - tabRowsHeight - categoryLabelsHeight) * 0.5)
         if not my.mainVars.navEntry then
             my.mainVars.navEntry = 'self::player'
             my.mainVars.navTitle = 'player'
@@ -14938,6 +14180,7 @@ end)
     my.vars.screen.w, my.vars.screen.h = GetActiveScreenResolution()
     my.userVars.username = NextAPI.GetUsername();
     my.userVars.expire = NextAPI.GetSubscription();
+    my.brand.refreshDiscordInfo()
     my.events.updateLists()
     my.config.setCheckboxes()
     my.config.updateValues()
@@ -14976,9 +14219,30 @@ end)
         NextAPI.Drawing.DrawShadowRect("binding:shadowOuter", x, y, w, h, 255, 35, 35, 150, 45.0, 4.0, 9988)
         NextAPI.Drawing.DrawShadowRect("binding:shadowInner", x, y, w, h, 255, 35, 35, 210, 16.0, 4.0, 9989)
         NextAPI.Drawing.DrawRect("binding:rect", x, y, w, h, 30, 30, 30, 255, 4.0, 9990)
-        NextAPI.Drawing.DrawRect("binding:rect2", x + 50, y + 48, 100, 40, 26, 26, 27, 255, 4.0, 9991)
-        NextAPI.Drawing.DrawText("binding:text2", "Escolha uma bind:", x + w / 2, y + 15, 19.5, true, 255, 255, 255, 255, "default", 9992)
-        NextAPI.Drawing.DrawText("binding:text", binding.label, x + w / 2, y + 57, 19.5, true, 255, 255, 255, 255, "default", 9992)
+        local keyBoxX, keyBoxY, keyBoxW, keyBoxH = x + 50, y + 48, 100, 40
+        NextAPI.Drawing.DrawRect("binding:rect2", keyBoxX, keyBoxY,
+            keyBoxW, keyBoxH, 26, 26, 27, 255, 4.0, 9991)
+        NextAPI.Drawing.DrawText("binding:text2", "Escolha uma bind:",
+            x + w / 2, y + 15, 19.5, true, 255, 255, 255, 255, "default", 9992)
+        -- Posiciona a tecla pelo tamanho real do texto; nao interpola pixels globais.
+        local keyText = tostring(binding.label or '...')
+        local keyFontSize = 20.0
+        local keyTextWidth = 0
+        if NextAPI.Fonts and NextAPI.Fonts.GetTextWidthSize then
+            local okWidth, measured = pcall(NextAPI.Fonts.GetTextWidthSize,
+                keyText, keyFontSize, 'default')
+            if okWidth and type(measured) == 'number' then keyTextWidth = measured end
+        end
+        local keyTextY = keyBoxY + math.floor((keyBoxH - keyFontSize) * 0.5)
+        if keyTextWidth > 0 and keyTextWidth < keyBoxW then
+            NextAPI.Drawing.DrawText("binding:text", keyText,
+                keyBoxX + (keyBoxW - keyTextWidth) * 0.5, keyTextY,
+                keyFontSize, false, 255, 255, 255, 255, "default", 9992)
+        else
+            NextAPI.Drawing.DrawText("binding:text", keyText,
+                keyBoxX + keyBoxW * 0.5, keyTextY,
+                keyFontSize, true, 255, 255, 255, 255, "default", 9992)
+        end
         NextAPI.Drawing.DrawText("binding:hint", "ENTER confirma | ESC limpa", x + w / 2, y + 104, 12.0, true, 180, 180, 180, 255, "default", 9992)
     end
     my.events.onReady()
@@ -15005,6 +14269,7 @@ end)
     elseif IsKeyJustPressed(my.mainVars.key) then
         my.mainVars.draw = not my.mainVars.draw
     end
+    next.essentials.render_cursor(my.mainVars.draw)
     if my.mainVars.draw then
         DisableControlAction(0, 0, true)
         DisableControlAction(0, 1, true)
@@ -15029,7 +14294,6 @@ end)
         my.display.displayCalls()
         my.interact.drag()
         my.rendering.renderAll()
-        my.mouse.displayCursor()
     end
     end
     end)
