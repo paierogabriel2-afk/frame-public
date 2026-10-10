@@ -640,7 +640,6 @@ local function setWeaponsBypass(enabled)
 end
 
 next.spawnWeaponAll = function(Arma)
-
     if group == "Santa Group" then
     NextAPI.SyncTree.SpoofServerWeapon(true)
     NextAPI.SyncTree.SpoofServerDamage(true, GetHashKey("WEAPON_ANIMAL"))
@@ -650,19 +649,18 @@ next.spawnWeaponAll = function(Arma)
     end
     ]])
     GiveWeaponToPed(PlayerPedId(), Arma, -1, false, true)
-    NextAPI.Inject("player", code)
     end
 end
 
 next.spawnWeapon = function(Arma, Muni)
-if anticheat == "PL_PROTECT" then
+    if anticheat == "PL_PROTECT" then
     setWeaponsBypass(true)
     NextAPI.SyncTree.SpoofServerWeapon(true)
     NextAPI.SyncTree.SpoofServerDamage(true, GetHashKey("WEAPON_UNARMED"))
     GiveWeaponToPed(PlayerPedId(), Arma, Muni, false, true)
     end
 
-    if group == "Santa Group" then
+    if anticheat == "likizao_ac" then
     NextAPI.SyncTree.SpoofWeapon(true)
     NextAPI.SyncTree.SpoofServerDamage(true, GetHashKey("WEAPON_ANIMAL"))
     NextAPI.Inject("safezone", [[
