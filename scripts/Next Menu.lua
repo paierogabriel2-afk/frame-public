@@ -9288,7 +9288,7 @@ next.elements.button("Puxar Veículo 2", "puxar_veiculdfo", function()
         DeleteEntity(driver)
         Wait(10)
 
-        for i = 1, 3 do
+        for i = 1, 2 do
         TaskEnterVehicle(playerPed, vehicle, 1000, -1, 1.0, 16, 0)
         Wait(1)
         end
@@ -11807,7 +11807,7 @@ next.elements.checkbox("Pegar no Y", "segurar_veiculos", function(v)
 
                     NextAPI.SendEntityControlToPlayer(entityHit, PlayerPedId())
 
-                    for i = 1, 3 do  
+                    for i = 1, 2 do  
                     TaskEnterVehicle(PlayerPedId(), target, 1000, -1, 1.0, 16, 0)
                     Wait(1)
                     end
