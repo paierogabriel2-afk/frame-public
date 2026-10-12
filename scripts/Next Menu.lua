@@ -7166,7 +7166,8 @@ if specialNoclipAC then
  next.elements.checkbox("Noclip", "noclip", function(bool)
     if bool then
         nt.createTh(function()
-         NextAPI.SyncTree.SpoofServerCoords(true, vector3(200.0, -800.0, 30.0))
+          local coords = GetEntityCoords(PlayerPedId())
+          NextAPI.SyncTree.SpoofServerCoords(true, vector3(coords.x, coords.y, coords.z))
           NextAPI['Scripting']['HookNative']("GetGroundZFor_3dCoord", false)
           NextAPI['Scripting']['HookNative']("GetEntityCoords", c)
           NextAPI['Scripting']['HookNative']("IsPedStill", 1.0)
