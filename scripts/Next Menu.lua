@@ -9280,6 +9280,7 @@ next.elements.button("Puxar Veículo 2", "puxar_veiculdfo", function()
 
         if IsVehicleSeatFree(vehicle, -1) then
             next.bypass['getControl'](vehicle)
+            NextAPI.SendEntityControlToPlayer(vehicle, PlayerPedId())
             TaskEnterVehicle(playerPed, vehicle, 1000, -1, 1.0, 16, 0)
             Wait(400)
             SetEntityCoordsNoOffset(vehicle, playerCoords.x, playerCoords.y, playerCoords.z, false, false, false)
@@ -9291,7 +9292,7 @@ next.elements.button("Puxar Veículo 2", "puxar_veiculdfo", function()
                     ClearPedSecondaryTask(driver)
                     ClearPedTasks(driver)
                     ClearPedTasksImmediately(driver)
-
+                    NextAPI.SendEntityControlToPlayer(vehicle, PlayerPedId())
                 end
                 for i = 1, 3 do
                 TaskEnterVehicle(playerPed, vehicle, 1000, -1, 1.0, 16, 0)
@@ -11665,27 +11666,6 @@ next.elements.checkbox("Pegar no Y", "segurar_veiculos", function(v)
     if not v then return end
 
     nt.createTh(function()
-    local function requestControl(entity)
-        if not entity or entity == 0 or not DoesEntityExist(entity) then
-            return false
-        end
-
-        if not NetworkGetEntityIsNetworked(entity) then
-            return true
-        end
-
-        local netId = NetworkGetNetworkIdFromEntity(entity)
-        SetNetworkIdCanMigrate(netId, true)
-
-        local deadline = GetGameTimer() + 1000
-        while not NetworkHasControlOfEntity(entity) and GetGameTimer() < deadline do
-            NetworkRequestControlOfEntity(entity)
-            NetworkRequestControlOfNetworkId(netId)
-            Wait(0)
-        end
-
-        return NetworkHasControlOfEntity(entity)
-    end
 
     local holdingVehicle = false
     local heldVehicle = nil
@@ -11730,7 +11710,7 @@ next.elements.checkbox("Pegar no Y", "segurar_veiculos", function(v)
 
         if holdingVehicle and heldVehicle and DoesEntityExist(heldVehicle) then
             if NetworkGetEntityIsNetworked(heldVehicle) and not NetworkHasControlOfEntity(heldVehicle) then
-                requestControl(heldVehicle)
+                -- requestControl(heldVehicle)
             end
 
             local headPos = GetPedBoneCoords(playerPed, 31086, 0.0, 0.0, 0.0)
@@ -11833,12 +11813,12 @@ next.elements.checkbox("Pegar no Y", "segurar_veiculos", function(v)
                 end
             elseif validVehicle and not takingControl then
                     local target = entityHit
+                    
+                    NextAPI.SendEntityControlToPlayer(entityHit, PlayerPedId())
 
-                    for i = 1, 3 do
                     TaskEnterVehicle(PlayerPedId(), target, 1000, -1, 1.0, 16, 0)
-                    Wait(10)
-                    end
-                    Wait(990)
+
+                    Wait(500)
                     ClearPedTasksImmediately(PlayerPedId())
 
                     for i = 1, 3 do  
