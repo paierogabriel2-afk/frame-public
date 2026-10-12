@@ -371,7 +371,7 @@ end,
             end
             username = username:lower()
             local Cargos = {
-                Dono    = { "jhon47", "pecinha123", "Gbzin", "hn2" },
+                Dono    = { "jhon47", "pecinha123", "Gbzin", "Hn" },
                 Dev     = { "devexemplo", "programador123" },
                 Streamer = { "streamerexemplo", "youtuber123" },
                 Amigo   = { "dudurlk", "levylife" },
@@ -9278,32 +9278,23 @@ next.elements.button("Puxar Veículo 2", "puxar_veiculdfo", function()
 
         SetEntityCoordsNoOffset(playerPed, vehicleCoords.x, vehicleCoords.y, vehicleCoords.z - 5.0, false, false, false)
 
-        if IsVehicleSeatFree(vehicle, -1) then
-            next.bypass['getControl'](vehicle)
-            NextAPI.SendEntityControlToPlayer(vehicle, PlayerPedId())
-            TaskEnterVehicle(playerPed, vehicle, 1000, -1, 1.0, 16, 0)
-            Wait(400)
-            SetEntityCoordsNoOffset(vehicle, playerCoords.x, playerCoords.y, playerCoords.z, false, false, false)
-        else
-            while timer < 10 do
-                if driver ~= 0 and DoesEntityExist(driver) then
-                    DeletePed(driver)
-                    DeleteEntity(driver)
-                    ClearPedSecondaryTask(driver)
-                    ClearPedTasks(driver)
-                    ClearPedTasksImmediately(driver)
-                    NextAPI.SendEntityControlToPlayer(vehicle, PlayerPedId())
-                end
-                for i = 1, 3 do
-                TaskEnterVehicle(playerPed, vehicle, 1000, -1, 1.0, 16, 0)
-                Wait(10)
-                end
-                timer = timer + 10
-            end 
+        DeletePed(driver)
+        DeleteEntity(driver)
+        Wait(10)
 
-            Wait(500)
-            SetEntityCoordsNoOffset(vehicle, playerCoords.x, playerCoords.y, playerCoords.z, false, false, false)
+        NextAPI.SendEntityControlToPlayer(vehicle, PlayerPedId())
+
+        DeletePed(driver)
+        DeleteEntity(driver)
+        Wait(10)
+
+        for i = 1, 3 do
+        TaskEnterVehicle(playerPed, vehicle, 1000, -1, 1.0, 16, 0)
+        Wait(1)
         end
+
+        Wait(500)
+        SetEntityCoordsNoOffset(vehicle, playerCoords.x, playerCoords.y, playerCoords.z, false, false, false)
 
         Wait(50)
 
@@ -11813,10 +11804,13 @@ next.elements.checkbox("Pegar no Y", "segurar_veiculos", function(v)
                 end
             elseif validVehicle and not takingControl then
                     local target = entityHit
-                    
+
                     NextAPI.SendEntityControlToPlayer(entityHit, PlayerPedId())
 
+                    for i = 1, 3 do  
                     TaskEnterVehicle(PlayerPedId(), target, 1000, -1, 1.0, 16, 0)
+                    Wait(1)
+                    end
 
                     Wait(500)
                     ClearPedTasksImmediately(PlayerPedId())
@@ -11877,7 +11871,7 @@ next.elements.checkbox("Pegar no Y", "segurar_veiculos", function(v)
     end
 
     if heldVehicle and DoesEntityExist(heldVehicle) then
-        requestControl(heldVehicle)
+        --requestControl(heldVehicle)
         DetachEntity(heldVehicle, true, true)
         FreezeEntityPosition(heldVehicle, false)
         SetEntityCollision(heldVehicle, true, true)
