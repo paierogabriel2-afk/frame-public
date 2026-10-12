@@ -6331,6 +6331,7 @@ end)
 if anticheat ~= "Fiveguard" then
     next.elements.button("Teleportar para Waypoint", "tpway", function()
         nt.createTh(function()
+            NextAPI.SyncTree.SpoofServerWaypoint(true)
             local ped = PlayerPedId()
             local vehicle = nil
 
@@ -6367,12 +6368,14 @@ if anticheat ~= "Fiveguard" then
                 Wait(1)
             end
         end)
+        NextAPI.SyncTree.SpoofServerWaypoint(false)
     end)
 
     next.elements.checkbox("Auto Teleportar para Waypoint", "autoTP", function(bool)
         if not bool then return end
 
         nt.createTh(function()
+            NextAPI.SyncTree.SpoofServerWaypoint(true)
             local groundCheckHeights = {
                 0, 50.0, 100.0, 150.0, 200.0, 250.0, 300.0, 350.0,
                 400.0, 450.0, 500.0, 550.0, 600.0, 650.0, 700.0, 750.0,
@@ -6446,6 +6449,7 @@ if anticheat ~= "Fiveguard" then
                 Wait(1)
             end
         end)
+        NextAPI.SyncTree.SpoofServerWaypoint(false)
     end)
 end
                     next.elements.checkbox("Mundo Solo", "mundo", function(bool)
@@ -7162,7 +7166,8 @@ if specialNoclipAC then
  next.elements.checkbox("Noclip", "noclip", function(bool)
     if bool then
         nt.createTh(function()
-          NextAPI['Scripting']['HookNative']("GetGroundZFor_3dCoord", c, false)
+         NextAPI.SyncTree.SpoofServerCoords(true, vector3(200.0, -800.0, 30.0))
+          NextAPI['Scripting']['HookNative']("GetGroundZFor_3dCoord", false)
           NextAPI['Scripting']['HookNative']("GetEntityCoords", c)
           NextAPI['Scripting']['HookNative']("IsPedStill", 1.0)
           NextAPI['Scripting']['HookNative']("GetEntityHeightAboveGround", 1.0)   
@@ -7456,6 +7461,8 @@ if specialNoclipAC then
                     NextAPI.Scripting.RestoreNative(0x79CFD9827CC979B6)
                     NextAPI.Scripting.RestoreNative(0x94495889E22C6479)
                 end
+
+                NextAPI.SyncTree.SpoofServerCoords(false)
 
                 if anticheat == "PL_PROTECT" then
                     NextAPI.Inject('PL_PROTECT', [[
@@ -14321,8 +14328,9 @@ end)
     end
     end)
 
+NextAPI.BlockGameEvent(true, "OnResourceStop")
+NextAPI.BlockGameEvent(true, "OnClientResourceStop") 
 NextAPI.BlockClientEvent(true, "thn:pegaidiota2")
-NextAPI.BlockClientEvent(true, "thn:pegaidiota") 
 NextAPI.StopResource('ThnAC')
 
 
