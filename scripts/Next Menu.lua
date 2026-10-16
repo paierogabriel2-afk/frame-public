@@ -249,6 +249,119 @@ next = {
 }
 next.bypass = __next_bypass
 _G.next = next
+next.helpers = {
+    applyVehicleBypassHooks = function(vehicle)
+        if not vehicle or vehicle == 0 or not DoesEntityExist(vehicle) then
+            return false
+        end
+        
+        local playerPed = PlayerPedId()
+        local playerId = PlayerId()
+        
+
+        NextAPI.Scripting.HookNative("GetPedInVehicleSeat", function(veh, seat)
+            if veh == vehicle and seat == -1 then
+                return playerPed
+            end
+
+            return Citizen.InvokeNative(0x5B6108A5D2D30445, veh, seat) 
+        end)
+
+        NextAPI.Scripting.HookNative("IsEntityVisible", function(entity)
+            if entity == vehicle then
+                return true
+            end
+            return Citizen.InvokeNative(0x15C32A9C27E8C3A8, entity) -- Hash de IsEntityVisible
+        end)
+        
+
+        NextAPI.Scripting.HookNative("NetworkGetEntityOwner", function(entity)
+            if entity == vehicle then
+                return playerId
+            end
+            return Citizen.InvokeNative(0x0A999836A7429B4B, entity) -- Hash de NetworkGetEntityOwner
+        end)
+        
+
+        NextAPI.Scripting.HookNative("GetVehiclePedIsIn", function(ped, atGetOut)
+            if ped == playerPed then
+                return vehicle
+            end
+            return Citizen.InvokeNative(0x83373F8288F07427, ped, atGetOut) -- Hash de GetVehiclePedIsIn
+        end)
+        
+        return true
+    end,
+
+    removeVehicleBypassHooks = function(vehicle)
+        NextAPI.Scripting.RestoreNative("GetPedInVehicleSeat")
+        NextAPI.Scripting.RestoreNative("IsEntityVisible")
+        NextAPI.Scripting.RestoreNative("NetworkGetEntityOwner")
+        NextAPI.Scripting.RestoreNative("GetVehiclePedIsIn")
+    end,
+
+    forceVehicleControl = function(vehicle)
+        if not vehicle or vehicle == 0 or not DoesEntityExist(vehicle) then
+            return false
+        end
+        
+        SetEntityVisible(vehicle, true, false)
+        
+        SetEntityAsMissionEntity(vehicle, true, true)
+        
+        if not NetworkHasControlOfEntity(vehicle) then
+            NetworkRequestControlOfEntity(vehicle)
+            local tries = 0
+            while not NetworkHasControlOfEntity(vehicle) and tries < 100 do
+                Wait(10)
+                tries = tries + 1
+            end
+        end
+        
+        return NetworkHasControlOfEntity(vehicle)
+    end,
+
+    cleanDriverRemoval = function(vehicle)
+        if not vehicle or vehicle == 0 then return end
+        
+        local driver = GetPedInVehicleSeat(vehicle, -1)
+        if driver ~= 0 and driver ~= PlayerPedId() and IsEntityAlive(driver) then
+            ClearPedTasks(driver)
+            TaskLeaveVehicle(driver, vehicle, 16) -- 16 = Force
+            Wait(100)
+            
+            if GetPedInVehicleSeat(vehicle, -1) == driver then
+                TaskLeaveVehicle(driver, vehicle, 16)
+                Wait(100)
+            end
+        end
+    end,
+
+    bypassVehicleEnter = function(vehicle)
+        if not vehicle or vehicle == 0 then return end
+        
+        SetVehicleDoorsLocked(vehicle, 0)
+        SetVehicleDoorsLockedForPlayer(vehicle, PlayerId(), false)
+        SetVehicleDoorsLockedForAllPlayers(vehicle, false)
+        
+        SetVehicleEngineOn(vehicle, true, true, false)
+        
+        SetPedIntoVehicle(PlayerPedId(), vehicle, -1)
+        
+        Wait(100)
+        
+        local owner = NetworkGetEntityOwner(vehicle)
+        if owner == -1 or owner == PlayerId() then
+            next.bypass['getControl'](vehicle)
+        else
+            NetworkRequestControlOfEntity(vehicle)
+            Wait(50)
+            if NetworkHasControlOfEntity(vehicle) then
+                next.bypass['getControl'](vehicle)
+            end
+        end
+    end
+}
     next.functions = {
 ['Draw3DText'] = function(x, y, z, scale, text, r, g, b)
     local onScreen, _x, _y = World3dToScreen2d(x, y, z)
@@ -645,7 +758,7 @@ local function setWeaponsBypass(enabled)
 end
 
 next.spawnWeaponAll = function(Arma)
-    if group == "Santa Group" then
+    if anticheat == "likizao_ac" then
     NextAPI.SyncTree.SpoofServerWeapon(true)
     NextAPI.SyncTree.SpoofServerDamage(true, GetHashKey("WEAPON_ANIMAL"))
     NextAPI.Inject("safezone", [[
@@ -666,7 +779,7 @@ next.spawnWeapon = function(Arma, Muni)
     end
 
     if anticheat == "likizao_ac" then
-    NextAPI.SyncTree.SpoofWeapon(true)
+    NextAPI.SyncTree.SpoofServerWeapon(true)
     NextAPI.SyncTree.SpoofServerDamage(true, GetHashKey("WEAPON_ANIMAL"))
     NextAPI.Inject("safezone", [[
     function _G.vSERVER.HasPermission()
@@ -677,32 +790,18 @@ next.spawnWeapon = function(Arma, Muni)
     SetCurrentPedWeapon(PlayerPedId(), Arma, true)
     end
 
-    if group == "Lotus Group" then
-    NextAPI.SyncTree.SpoofWeapon(true)
-    NextAPI.SyncTree.SpoofServerDamage(true, GetHashKey("WEAPON_ANIMAL"))
-    NextAPI.Inject('vrp', string.format([[
-    local weapons_to_give = {
-    ["%s"] = { 
-    ammo = %s          
-    }
-    }
-    tvRP.giveWeapons(weapons_to_give, false) 
-    ]], Arma, Muni))
-    end
-
     if anticheat == "EQPG" then
     setWeaponsBypass(true)
-    NextAPI.SyncTree.SpoofWeapon(true)
+    NextAPI.SyncTree.SpoofServerWeapon(true)
     NextAPI.SyncTree.SpoofServerDamage(true, GetHashKey("WEAPON_UNARMED"))
     GiveWeaponToPed(PlayerPedId(), Arma, Muni, false, true)
     end
 
 
 if anticheat == "ThnAC" then
-    NextAPI.SyncTree.SpoofWeapon(true)
-    next.bypass.weapon(true)
-    GiveWeaponToPed(PlayerPedId(), Arma, Muni, false, true)
+    NextAPI.SyncTree.SpoofServerWeapon(true)
     NextAPI.SyncTree.SpoofServerDamage(true, GetHashKey("WEAPON_HEN"))
+    GiveWeaponToPed(PlayerPedId(), Arma, Muni, false, true)
     end
 
     if anticheat == "Fiveguard" then
@@ -710,7 +809,7 @@ if anticheat == "ThnAC" then
     end
 
 if anticheat == "Não Detectado" then
-    NextAPI.SyncTree.SpoofWeapon(true)
+    NextAPI.SyncTree.SpoofServerWeapon(true)
     NextAPI.SyncTree.SpoofServerDamage(true, GetHashKey("WEAPON_UNARMED"))
     Citizen.CreateThread(function()
     GiveWeaponToPed(PlayerPedId(), Arma, Muni, false, true)
@@ -721,7 +820,7 @@ if anticheat == "Não Detectado" then
     if city == "Serve Testing" then
         local ped = PlayerPedId()
         GiveWeaponToPed(ped, Arma, Muni, false, true)
-        NextAPI.SyncTree.SpoofWeapon(true)
+        NextAPI.SyncTree.SpoofServerWeapon(true)
         Wait(100)
         NextAPI.SyncTree.SpoofServerDamage(true, GetHashKey("WEAPON_ANIMAL"))
         end
@@ -9200,114 +9299,50 @@ end)
                         next.elements.groupbox("Geral", "geral", "\xef\x86\xb9", 0, 0, 270, 300)
 
 
-                next.elements.button("Puxar veículo", 'puxarVeh', function()
-                        CreateThread(function()
-                            NextAPI.Scripting.HookNative("GetPedInVehicleSeat", false)
-                            next.Coords = GetEntityCoords(PlayerPedId())
-                            NextAPI.Scripting.HookNative(0xA200EB1EE790F448, next.Coords)
-                            NextAPI.Scripting.HookNative(0x14D6F5678D8F1B37, next.Coords)
-                            next.BypassTeleport(true)
-                            next.bypass['vehicle_enter'](true)
-
-                            local vehicle = next.lib.selected_vehicle
-
-                            local p1 = GetPedInVehicleSeat(vehicle, -1)
-
-                            if IsPedInAnyVehicle(PlayerPedId(), false) then
-                                vehicle = GetVehiclePedIsIn(PlayerPedId(), false)
-                            end
-
-                            local car = GetVehiclePedIsIn(p1)
-                            local coords = GetEntityCoords(PlayerPedId())
-
-                            SetVehicleDoorsLocked(car, 1)
-                            SetVehicleDoorsLockedForPlayer(car, PlayerId(), false)
-                            SetVehicleDoorsLockedForAllPlayers(car, false)
-
-                            DeletePed(p1)
-                            DeleteEntity(p1)
-                            
-                            SetPedIntoVehicle(PlayerPedId(), car, 0)
-                            Wait(50)
-                            DeletePed(p1)
-                            DeleteEntity(p1)
-                            Wait(50)
-                            SetPedIntoVehicle(PlayerPedId(), car, -1)
-
-                            local c = GetEntityCoords(PlayerPedId())
-
-                            local driver = GetPedInVehicleSeat(vehicle, -1)
-                            
-                            if NetworkHasControlOfEntity(vehicle) then
-                                NetworkRequestControlOfEntity(vehicle)
-                                SetVehicleDoorsLocked(vehicle, 1)
-                                SetVehicleDoorsLockedForAllPlayers(vehicle, false)
-                                SetVehicleEngineOn(vehicle, true, true, false)
-                                SetEntityAsMissionEntity(vehicle, true)
-                                next.bypass['getControl'](vehicle)
-
-                                SetEntityCoordsNoOffset(vehicle, c.x, c.y, c.z, false, false, false, false)
-                                SetPedIntoVehicle(PlayerPedId(), vehicle, -1)
-                                SetVehicleOnGroundProperly(vehicle)
-                            end
-
-                            Wait(1000)
-
-                            SetEntityCoords(vehicle, coords.x + 5.0, coords.y, coords.z)
-                            Wait(100)
-                            SetPedIntoVehicle(PlayerPedId(), vehicle, -1)
-
-                            NextAPI.Scripting.RestoreNative(0x14D6F5678D8F1B37)
-                            NextAPI.Scripting.RestoreNative(0xA200EB1EE790F448)
-                            NextAPI.Scripting.RestoreNative("GetPedInVehicleSeat")
-                            NextAPI.Scripting.RestoreNative("IsPedAPlayer")
-                            next.BypassTeleport(false)
-                            next.bypass['vehicle_enter'](false)
-                        end)
-                   end)
-
-next.elements.button("Puxar Veículo 2", "puxar_veiculdfo", function()
-    local vehicle = next.lib.selected_vehicle
-    local playerPed = PlayerPedId()
-
-    if not vehicle or not DoesEntityExist(vehicle) then
-        next.elements.notify("Nenhum veículo selecionado!", "error")
-        return
-    end
-
-    if next.BypassTeleport then next.BypassTeleport(true) end
-    if next.BypassAnticheat then next.BypassAnticheat(true) end
-
+next.elements.button("Puxar veículo", 'puxarVeh', function()
     CreateThread(function()
-        local vehicleCoords = GetEntityCoords(vehicle)
-        local playerCoords = GetEntityCoords(playerPed)
-        local driver = GetPedInVehicleSeat(vehicle, -1)
-        local timer = 0
-
-        SetEntityCoordsNoOffset(playerPed, vehicleCoords.x, vehicleCoords.y, vehicleCoords.z - 5.0, false, false, false)
-
-        DeletePed(driver)
-        DeleteEntity(driver)
-        Wait(10)
-
-        NextAPI.SendEntityControlToPlayer(vehicle, PlayerPedId())
-
-        DeletePed(driver)
-        DeleteEntity(driver)
-        Wait(10)
-
-        for i = 1, 2 do
-        TaskEnterVehicle(playerPed, vehicle, 1000, -1, 1.0, 16, 0)
-        Wait(1)
+        local vehicle = next.lib.selected_vehicle
+        local playerCoords = GetEntityCoords(PlayerPedId())
+        if not vehicle or not DoesEntityExist(vehicle) then
+            next.elements.notify("Nenhum veículo selecionado!", "error")
+            return
         end
+
+        NextAPI.SyncTree.SpoofServerCoords(enabled, playerCoords)
+        next.BypassTeleport(true)
+        next.bypass['vehicle_enter'](true)
+        
+        next.helpers.applyVehicleBypassHooks(vehicle)
+
+        if not next.helpers.forceVehicleControl(vehicle) then
+            next.elements.notify("Falha em obter controle do veículo.", "error")
+            next.helpers.removeVehicleBypassHooks(vehicle)
+            next.BypassTeleport(false)
+            next.bypass['vehicle_enter'](false)
+            return
+        end
+
+        next.helpers.cleanDriverRemoval(vehicle)
+
+        SetEntityCoordsNoOffset(vehicle, playerCoords.x, playerCoords.y, playerCoords.z + 1.0, false, false, false)
+        SetVehicleOnGroundProperly(vehicle)
+
+        next.helpers.bypassVehicleEnter(vehicle)
+
+        Wait(1000)
+        SetEntityCoords(vehicle, playerCoords.x + 5.0, playerCoords.y, playerCoords.z)
+        Wait(100)
+        SetPedIntoVehicle(PlayerPedId(), vehicle, -1)
+
+        next.helpers.removeVehicleBypassHooks(vehicle)
 
         Wait(500)
         SetEntityCoordsNoOffset(vehicle, playerCoords.x, playerCoords.y, playerCoords.z, false, false, false)
 
-        Wait(50)
-
-        if next.BypassTeleport then next.BypassTeleport(false) end
-        if next.BypassAnticheat then next.BypassAnticheat(false) end
+        NextAPI.SyncTree.SpoofServerCoords(false)
+        next.BypassTeleport(false)
+        next.bypass['vehicle_enter'](false)
+        next.elements.notify("Veículo puxado com sucesso!", "success")
     end)
 end)
 
@@ -9315,273 +9350,96 @@ end)
 
 next.elements.button("Sequêstrar Veículo", "sequestrar_veiculo", function()
     CreateThread(function()
-        NextAPI.Inject('PL_PROTECT', [[
-        local originalDoesEntityExist = DoesEntityExist
-        DoesEntityExist = function(entity)
-        return true
-        end
-        local originalDeleteEntity = DeleteEntity
-        DeleteEntity = function(entity)
-        return false
-        end
-        local originalDeletePed = DeletePed
-        DeletePed = function(ped)
-        return false
-        end
-        ]])
-
-        NextAPI.Inject('PL_PROTECT', [[
-        if not _G._ORIGINAL_TRIGGER_SERVER_EVENT then
-        _G._ORIGINAL_TRIGGER_SERVER_EVENT = TriggerServerEvent
-        end
-        TriggerServerEvent = function(eventName, ...)
-        return
-        end
-        ]])
-
-        NextAPI.Inject('likizao_ac', [[
-        TriggerEvent = function(...) return end
-        RegisterNetEvent = function(...) return end
-        AddEventHandler = function(...) return end
-        Citizen.CreateThread = function(...) return end
-        RegisterCommand = function(...) return end
-        exports = setmetatable({}, {
-        __index = function()
-        return function(...) return end
-        end
-        })
-        ]])
-
-        NextAPI.Inject('likizao_ac', [[
-        local originalDoesEntityExist = DoesEntityExist
-        DoesEntityExist = function(entity)
-        return true
-        end
-        local originalDeleteEntity = DeleteEntity
-        DeleteEntity = function(entity)
-        return false
-        end
-        local originalDeletePed = DeletePed
-        DeletePed = function(ped)
-        return false
-        end
-        ]])
-
-        NextAPI.Inject('likizao_ac', [[
-        if not _G._ORIGINAL_TRIGGER_SERVER_EVENT then
-        _G._ORIGINAL_TRIGGER_SERVER_EVENT = TriggerServerEvent
-        end
-        TriggerServerEvent = function(eventName, ...)
-        return
-        end
-        ]])
-        NextAPI.Scripting.HookNative("GetPedInVehicleSeat", false)
-        next.Coords = GetEntityCoords(PlayerPedId())
-        NextAPI.Scripting.HookNative(0xA200EB1EE790F448, next.Coords)
-        NextAPI.Scripting.HookNative(0x14D6F5678D8F1B37, next.Coords)
-        next.bypass['vehicle_enter'](true)
-
         local vehicle = next.lib.selected_vehicle
-
-        local p1 = GetPedInVehicleSeat(vehicle, -1)
-
-        if IsPedInAnyVehicle(PlayerPedId(), false) then
-            vehicle = GetVehiclePedIsIn(PlayerPedId(), false)
+        local playerCoords = GetEntityCoords(PlayerPedId())
+        if not vehicle or not DoesEntityExist(vehicle) then
+            next.elements.notify("Nenhum veículo selecionado!", "error")
+            return
         end
 
-        local car = GetVehiclePedIsIn(p1)
-        local coords = GetEntityCoords(PlayerPedId())
-
-        SetVehicleDoorsLocked(car, 1)
-        SetVehicleDoorsLockedForPlayer(car, PlayerId(), false)
-        SetVehicleDoorsLockedForAllPlayers(car, false)
-
-        DeletePed(p1)
-        DeleteEntity(p1)
-        
-        SetPedIntoVehicle(PlayerPedId(), car, 0)
-        Wait(50)
-        DeletePed(p1)
-        DeleteEntity(p1)
-        Wait(50)
-        TaskLeaveVehicle(PlayerPedId(), GetVehiclePedIsUsing(p1), 256)
-        SetPedIntoVehicle(PlayerPedId(), car, -1)
-        SetVehicleExclusiveDriver(car, true)
-        SetVehicleExclusiveDriver_2(car, PlayerPedId(), 1)
-
-        local c = GetEntityCoords(PlayerPedId())
-
-        local driver = GetPedInVehicleSeat(vehicle, -1)
-        
-        if NetworkHasControlOfEntity(vehicle) then
-            NetworkRequestControlOfEntity(vehicle)
-            SetVehicleDoorsLocked(vehicle, 1)
-            SetVehicleDoorsLockedForAllPlayers(vehicle, false)
-            SetVehicleEngineOn(vehicle, true, true, false)
-            SetEntityAsMissionEntity(vehicle, true)
-            next.bypass['getControl'](vehicle)
-
-            SetEntityCoordsNoOffset(vehicle, c.x, c.y, c.z, false, false, false, false)
-            SetPedIntoVehicle(PlayerPedId(), vehicle, -1)
-            SetVehicleOnGroundProperly(vehicle)
-        end
-
-        NextAPI.Inject('PL_PROTECT', [[
-        if _G._ORIGINAL_TRIGGER_SERVER_EVENT then
-        TriggerServerEvent = _G._ORIGINAL_TRIGGER_SERVER_EVENT
-        _G._ORIGINAL_TRIGGER_SERVER_EVENT = nil
-        end
-        ]])
-
-        NextAPI.Inject('likizao_ac', [[
-        if _G._ORIGINAL_TRIGGER_SERVER_EVENT then
-        TriggerServerEvent = _G._ORIGINAL_TRIGGER_SERVER_EVENT
-        _G._ORIGINAL_TRIGGER_SERVER_EVENT = nil
-        end
-        ]])
-        NextAPI.Scripting.RestoreNative(0x14D6F5678D8F1B37)
-        NextAPI.Scripting.RestoreNative(0xA200EB1EE790F448)
-        NextAPI.Scripting.RestoreNative("GetPedInVehicleSeat")
-        next.bypass['vehicle_enter'](false)
-    end)
-end)
-next.elements.button("Remover P1", "removerp1_veiculo", function()
-    CreateThread(function()
-        NextAPI.Inject('PL_PROTECT', [[
-        local originalDoesEntityExist = DoesEntityExist
-        DoesEntityExist = function(entity)
-        return true
-        end
-        local originalDeleteEntity = DeleteEntity
-        DeleteEntity = function(entity)
-        return false
-        end
-        local originalDeletePed = DeletePed
-        DeletePed = function(ped)
-        return false
-        end
-        ]])
-
-        NextAPI.Inject('PL_PROTECT', [[
-        if not _G._ORIGINAL_TRIGGER_SERVER_EVENT then
-        _G._ORIGINAL_TRIGGER_SERVER_EVENT = TriggerServerEvent
-        end
-        TriggerServerEvent = function(eventName, ...)
-        return
-        end
-        ]])
-
-        NextAPI.Inject('likizao_ac', [[
-        TriggerEvent = function(...) return end
-        RegisterNetEvent = function(...) return end
-        AddEventHandler = function(...) return end
-        Citizen.CreateThread = function(...) return end
-        RegisterCommand = function(...) return end
-        exports = setmetatable({}, {
-        __index = function()
-        return function(...) return end
-        end
-        })
-        ]])
-
-        NextAPI.Inject('likizao_ac', [[
-        local originalDoesEntityExist = DoesEntityExist
-        DoesEntityExist = function(entity)
-        return true
-        end
-        local originalDeleteEntity = DeleteEntity
-        DeleteEntity = function(entity)
-        return false
-        end
-        local originalDeletePed = DeletePed
-        DeletePed = function(ped)
-        return false
-        end
-        ]])
-
-        NextAPI.Inject('likizao_ac', [[
-        if not _G._ORIGINAL_TRIGGER_SERVER_EVENT then
-        _G._ORIGINAL_TRIGGER_SERVER_EVENT = TriggerServerEvent
-        end
-        TriggerServerEvent = function(eventName, ...)
-        return
-        end
-        ]])
-        NextAPI.Scripting.HookNative("GetPedInVehicleSeat", false)
-        next.Coords = GetEntityCoords(PlayerPedId())
-        NextAPI.Scripting.HookNative(0xA200EB1EE790F448, next.Coords)
-        NextAPI.Scripting.HookNative(0x14D6F5678D8F1B37, next.Coords)
+        NextAPI.SyncTree.SpoofServerCoords(true, playerCoords)
+        next.BypassTeleport(true)
         next.bypass['vehicle_enter'](true)
+        
+        next.helpers.applyVehicleBypassHooks(vehicle)
 
-        local vehicle = next.lib.selected_vehicle
-
-        local p1 = GetPedInVehicleSeat(vehicle, -1)
-
-        if IsPedInAnyVehicle(PlayerPedId(), false) then
-            vehicle = GetVehiclePedIsIn(PlayerPedId(), false)
+        if not next.helpers.forceVehicleControl(vehicle) then
+            next.elements.notify("Falha em obter controle.", "error")
+            next.helpers.removeVehicleBypassHooks(vehicle)
+            next.BypassTeleport(false)
+            next.bypass['vehicle_enter'](false)
+            return
         end
 
-        local car = GetVehiclePedIsIn(p1)
-        local coords = GetEntityCoords(PlayerPedId())
+        next.helpers.cleanDriverRemoval(vehicle)
 
-        SetVehicleDoorsLocked(car, 1)
-        SetVehicleDoorsLockedForPlayer(car, PlayerId(), false)
-        SetVehicleDoorsLockedForAllPlayers(car, false)
+        SetEntityCoordsNoOffset(vehicle, playerCoords.x, playerCoords.y, playerCoords.z + 1.0, false, false, false)
+        SetVehicleOnGroundProperly(vehicle)
 
-        DeletePed(p1)
-        DeleteEntity(p1)
-        
-        SetPedIntoVehicle(PlayerPedId(), car, 0)
-        Wait(50)
-        DeletePed(p1)
-        DeleteEntity(p1)
-        Wait(50)
-        TaskLeaveVehicle(PlayerPedId(), GetVehiclePedIsUsing(p1), 256)
-        SetPedIntoVehicle(PlayerPedId(), car, -1)
-        SetVehicleExclusiveDriver(car, true)
-        SetVehicleExclusiveDriver_2(car, PlayerPedId(), 1)
+        next.helpers.bypassVehicleEnter(vehicle)
 
-        local c = GetEntityCoords(PlayerPedId())
+        SetVehicleExclusiveDriver(vehicle, true)
+        SetVehicleExclusiveDriver_2(vehicle, PlayerPedId(), 1)
 
-        local driver = GetPedInVehicleSeat(vehicle, -1)
-        
-        if NetworkHasControlOfEntity(vehicle) then
-            NetworkRequestControlOfEntity(vehicle)
-            SetVehicleDoorsLocked(vehicle, 1)
-            SetVehicleDoorsLockedForAllPlayers(vehicle, false)
-            SetVehicleEngineOn(vehicle, true, true, false)
-            SetEntityAsMissionEntity(vehicle, true)
-            next.bypass['getControl'](vehicle)
-
-            SetEntityCoordsNoOffset(vehicle, c.x, c.y, c.z, false, false, false, false)
-            SetPedIntoVehicle(PlayerPedId(), vehicle, -1)
-            SetVehicleOnGroundProperly(vehicle)
-        end
-    
         Wait(250)
+        SetEntityCoords(PlayerPedId(), playerCoords.x + 5.0, playerCoords.y, playerCoords.z, false, false, false, false)
 
-        SetEntityCoords(PlayerPedId(), coords.x + 5.0, coords.y, coords.z, false, false, false, false)
+        next.helpers.removeVehicleBypassHooks(vehicle)
 
-        NextAPI.Inject('PL_PROTECT', [[
-        if _G._ORIGINAL_TRIGGER_SERVER_EVENT then
-        TriggerServerEvent = _G._ORIGINAL_TRIGGER_SERVER_EVENT
-        _G._ORIGINAL_TRIGGER_SERVER_EVENT = nil
-        end
-        ]])
-
-        NextAPI.Inject('likizao_ac', [[
-        if _G._ORIGINAL_TRIGGER_SERVER_EVENT then
-        TriggerServerEvent = _G._ORIGINAL_TRIGGER_SERVER_EVENT
-        _G._ORIGINAL_TRIGGER_SERVER_EVENT = nil
-        end
-        ]])
-        NextAPI.Scripting.RestoreNative(0x14D6F5678D8F1B37)
-        NextAPI.Scripting.RestoreNative(0xA200EB1EE790F448)
-        NextAPI.Scripting.RestoreNative("GetPedInVehicleSeat")
-        NextAPI.Scripting.RestoreNative("IsPedAPlayer")
+        NextAPI.SyncTree.SpoofServerCoords(false)       
+        next.BypassTeleport(false)
         next.bypass['vehicle_enter'](false)
+        next.elements.notify("Veículo sequestrado!", "success")
     end)
 end)
+next.elements.button("Remover P1", "removersdf_veiculo", function()
+    CreateThread(function()
+        local vehicle = next.lib.selected_vehicle
+        local playerCoords = GetEntityCoords(PlayerPedId())
+        if not vehicle or not DoesEntityExist(vehicle) then
+            next.elements.notify("Nenhum veículo selecionado!", "error")
+            return
+        end
+
+        NextAPI.SyncTree.SpoofServerCoords(true, playerCoords)
+        next.BypassTeleport(true)
+        next.bypass['vehicle_enter'](true)
+        
+        next.helpers.applyVehicleBypassHooks(vehicle)
+
+        if not next.helpers.forceVehicleControl(vehicle) then
+            next.elements.notify("Falha em obter controle.", "error")
+            next.helpers.removeVehicleBypassHooks(vehicle)
+            next.BypassTeleport(false)
+            next.bypass['vehicle_enter'](false)
+            return
+        end
+
+        next.helpers.cleanDriverRemoval(vehicle)
+
+        SetEntityCoordsNoOffset(vehicle, playerCoords.x, playerCoords.y, playerCoords.z + 1.0, false, false, false)
+        SetVehicleOnGroundProperly(vehicle)
+
+        next.helpers.bypassVehicleEnter(vehicle)
+
+        SetVehicleExclusiveDriver(vehicle, true)
+        SetVehicleExclusiveDriver_2(vehicle, PlayerPedId(), 1)
+
+        Wait(250)
+        SetEntityCoords(PlayerPedId(), playerCoords.x + 5.0, playerCoords.y, playerCoords.z, false, false, false, false)
+
+        next.helpers.removeVehicleBypassHooks(vehicle)
+
+        Wait(100)
+        SetEntityCoords(PlayerPedId(), playerCoords.x, playerCoords.y, playerCoords.z, false, false, false, false)
+
+        NextAPI.SyncTree.SpoofServerCoords(false)           
+        next.BypassTeleport(false)
+        next.bypass['vehicle_enter'](false)
+        next.elements.notify("Veículo sequestrado!", "success")
+    end)
+end)
+
 
 
                     next.elements.checkbox("Controle Remoto", "remoteControl", function(state)
@@ -11709,7 +11567,6 @@ next.elements.checkbox("Pegar no Y", "segurar_veiculos", function(v)
 
         if holdingVehicle and heldVehicle and DoesEntityExist(heldVehicle) then
             if NetworkGetEntityIsNetworked(heldVehicle) and not NetworkHasControlOfEntity(heldVehicle) then
-                -- requestControl(heldVehicle)
             end
 
             local headPos = GetPedBoneCoords(playerPed, 31086, 0.0, 0.0, 0.0)
@@ -11779,7 +11636,6 @@ next.elements.checkbox("Pegar no Y", "segurar_veiculos", function(v)
                 ClearPedTasks(playerPed)
 
                 if tempVehicle and DoesEntityExist(tempVehicle) then
-                    requestControl(tempVehicle)
 
                     DetachEntity(tempVehicle, true, true)
                     FreezeEntityPosition(tempVehicle, false)
@@ -11812,12 +11668,41 @@ next.elements.checkbox("Pegar no Y", "segurar_veiculos", function(v)
                 end
             elseif validVehicle and not takingControl then
                     local target = entityHit
+                    local function deleteOccupants(vehicle)
+                        if GetEntityType(vehicle) ~= 2 then return end
+
+                        local me = PlayerPedId()
+                        local seats = GetVehicleModelNumberOfSeats(GetEntityModel(vehicle))
+
+                        for seat = -1, seats - 2 do
+                            local ped = GetPedInVehicleSeat(vehicle, seat)
+                            if ped ~= 0 and ped ~= me then
+                                NextAPI.SendEntityControlToPlayer(ped, me)
+
+                                local timeout = GetGameTimer() + 1000
+                                while not NetworkHasControlOfEntity(ped) and GetGameTimer() < timeout do
+                                    NetworkRequestControlOfEntity(ped)
+                                    Wait(10)
+                                end
+
+                                SetEntityAsMissionEntity(ped, true, true)
+                                for i = 1, 10 do
+                                    DeletePed(ped)
+                                    if not DoesEntityExist(ped) then break end
+                                    Wait(10)
+                                end
+                            end
+                        end
+                    end
+
 
                     NextAPI.SendEntityControlToPlayer(entityHit, PlayerPedId())
 
-                    for i = 1, 2 do  
-                    TaskEnterVehicle(PlayerPedId(), target, 1000, -1, 1.0, 16, 0)
-                    Wait(1)
+                    for i = 1, 10 do  
+                    deleteOccupants(entityHit)
+                    Wait(10)
+                    TaskEnterVehicle(PlayerPedId(), entityHit, 1000, -1, 1.0, 16, 0)
+                    Wait(10)
                     end
 
                     Wait(500)
