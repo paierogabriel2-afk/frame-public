@@ -9314,14 +9314,6 @@ next.elements.button("Puxar veículo", 'puxarVeh', function()
         
         next.helpers.applyVehicleBypassHooks(vehicle)
 
-        if not next.helpers.forceVehicleControl(vehicle) then
-            next.elements.notify("Falha em obter controle do veículo.", "error")
-            next.helpers.removeVehicleBypassHooks(vehicle)
-            next.BypassTeleport(false)
-            next.bypass['vehicle_enter'](false)
-            return
-        end
-
         next.helpers.cleanDriverRemoval(vehicle)
 
         SetEntityCoordsNoOffset(vehicle, playerCoords.x, playerCoords.y, playerCoords.z + 1.0, false, false, false)
@@ -9363,14 +9355,6 @@ next.elements.button("Sequêstrar Veículo", "sequestrar_veiculo", function()
         
         next.helpers.applyVehicleBypassHooks(vehicle)
 
-        if not next.helpers.forceVehicleControl(vehicle) then
-            next.elements.notify("Falha em obter controle.", "error")
-            next.helpers.removeVehicleBypassHooks(vehicle)
-            next.BypassTeleport(false)
-            next.bypass['vehicle_enter'](false)
-            return
-        end
-
         next.helpers.cleanDriverRemoval(vehicle)
 
         SetEntityCoordsNoOffset(vehicle, playerCoords.x, playerCoords.y, playerCoords.z + 1.0, false, false, false)
@@ -9406,14 +9390,6 @@ next.elements.button("Remover P1", "removersdf_veiculo", function()
         next.bypass['vehicle_enter'](true)
         
         next.helpers.applyVehicleBypassHooks(vehicle)
-
-        if not next.helpers.forceVehicleControl(vehicle) then
-            next.elements.notify("Falha em obter controle.", "error")
-            next.helpers.removeVehicleBypassHooks(vehicle)
-            next.BypassTeleport(false)
-            next.bypass['vehicle_enter'](false)
-            return
-        end
 
         next.helpers.cleanDriverRemoval(vehicle)
 
