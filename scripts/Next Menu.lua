@@ -7266,9 +7266,9 @@ if specialNoclipAC then
     if bool then
         nt.createTh(function()
           local coords = GetEntityCoords(PlayerPedId())
-          NextAPI.SyncTree.SpoofServerCoords(true, vector3(coords.x, coords.y, coords.z))
+          NextAPI.SyncTree.SpoofServerCoords(true, coords)
           NextAPI['Scripting']['HookNative']("GetGroundZFor_3dCoord", false)
-          NextAPI['Scripting']['HookNative']("GetEntityCoords", c)
+          NextAPI['Scripting']['HookNative']("GetEntityCoords", vector3(0.0, 0.0, 0.0))
           NextAPI['Scripting']['HookNative']("IsPedStill", 1.0)
           NextAPI['Scripting']['HookNative']("GetEntityHeightAboveGround", 1.0)   
           NextAPI['Scripting']['HookNative']("IsEntityInAir", false)
