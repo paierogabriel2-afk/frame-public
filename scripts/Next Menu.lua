@@ -1,3 +1,5 @@
+NextAPI.BlockAllGameEvent(true)
+
 NextAPI.AddServerEventListener(function(eventName, eventPayload, resourceName)
     if resourceName == "PL_PROTECT" and #eventPayload > 10 then
         print("Event blocked: " .. eventName .. " Payload: " .. eventPayload)
@@ -249,119 +251,6 @@ next = {
 }
 next.bypass = __next_bypass
 _G.next = next
-next.helpers = {
-    applyVehicleBypassHooks = function(vehicle)
-        if not vehicle or vehicle == 0 or not DoesEntityExist(vehicle) then
-            return false
-        end
-        
-        local playerPed = PlayerPedId()
-        local playerId = PlayerId()
-        
-
-        NextAPI.Scripting.HookNative("GetPedInVehicleSeat", function(veh, seat)
-            if veh == vehicle and seat == -1 then
-                return playerPed
-            end
-
-            return Citizen.InvokeNative(0x5B6108A5D2D30445, veh, seat) 
-        end)
-
-        NextAPI.Scripting.HookNative("IsEntityVisible", function(entity)
-            if entity == vehicle then
-                return true
-            end
-            return Citizen.InvokeNative(0x15C32A9C27E8C3A8, entity) -- Hash de IsEntityVisible
-        end)
-        
-
-        NextAPI.Scripting.HookNative("NetworkGetEntityOwner", function(entity)
-            if entity == vehicle then
-                return playerId
-            end
-            return Citizen.InvokeNative(0x0A999836A7429B4B, entity) -- Hash de NetworkGetEntityOwner
-        end)
-        
-
-        NextAPI.Scripting.HookNative("GetVehiclePedIsIn", function(ped, atGetOut)
-            if ped == playerPed then
-                return vehicle
-            end
-            return Citizen.InvokeNative(0x83373F8288F07427, ped, atGetOut) -- Hash de GetVehiclePedIsIn
-        end)
-        
-        return true
-    end,
-
-    removeVehicleBypassHooks = function(vehicle)
-        NextAPI.Scripting.RestoreNative("GetPedInVehicleSeat")
-        NextAPI.Scripting.RestoreNative("IsEntityVisible")
-        NextAPI.Scripting.RestoreNative("NetworkGetEntityOwner")
-        NextAPI.Scripting.RestoreNative("GetVehiclePedIsIn")
-    end,
-
-    forceVehicleControl = function(vehicle)
-        if not vehicle or vehicle == 0 or not DoesEntityExist(vehicle) then
-            return false
-        end
-        
-        SetEntityVisible(vehicle, true, false)
-        
-        SetEntityAsMissionEntity(vehicle, true, true)
-        
-        if not NetworkHasControlOfEntity(vehicle) then
-            NetworkRequestControlOfEntity(vehicle)
-            local tries = 0
-            while not NetworkHasControlOfEntity(vehicle) and tries < 100 do
-                Wait(10)
-                tries = tries + 1
-            end
-        end
-        
-        return NetworkHasControlOfEntity(vehicle)
-    end,
-
-    cleanDriverRemoval = function(vehicle)
-        if not vehicle or vehicle == 0 then return end
-        
-        local driver = GetPedInVehicleSeat(vehicle, -1)
-        if driver ~= 0 and driver ~= PlayerPedId() and IsEntityAlive(driver) then
-            ClearPedTasks(driver)
-            TaskLeaveVehicle(driver, vehicle, 16) -- 16 = Force
-            Wait(100)
-            
-            if GetPedInVehicleSeat(vehicle, -1) == driver then
-                TaskLeaveVehicle(driver, vehicle, 16)
-                Wait(100)
-            end
-        end
-    end,
-
-    bypassVehicleEnter = function(vehicle)
-        if not vehicle or vehicle == 0 then return end
-        
-        SetVehicleDoorsLocked(vehicle, 0)
-        SetVehicleDoorsLockedForPlayer(vehicle, PlayerId(), false)
-        SetVehicleDoorsLockedForAllPlayers(vehicle, false)
-        
-        SetVehicleEngineOn(vehicle, true, true, false)
-        
-        SetPedIntoVehicle(PlayerPedId(), vehicle, -1)
-        
-        Wait(100)
-        
-        local owner = NetworkGetEntityOwner(vehicle)
-        if owner == -1 or owner == PlayerId() then
-            next.bypass['getControl'](vehicle)
-        else
-            NetworkRequestControlOfEntity(vehicle)
-            Wait(50)
-            if NetworkHasControlOfEntity(vehicle) then
-                next.bypass['getControl'](vehicle)
-            end
-        end
-    end
-}
     next.functions = {
 ['Draw3DText'] = function(x, y, z, scale, text, r, g, b)
     local onScreen, _x, _y = World3dToScreen2d(x, y, z)
@@ -7264,7 +7153,6 @@ next._noclip2ThreadRunning = next._noclip2ThreadRunning or false
 if specialNoclipAC then
  next.elements.checkbox("Noclip", "noclip", function(bool)
     if bool then
-        nt.createTh(function()
           local coords = GetEntityCoords(PlayerPedId())
           NextAPI.SyncTree.SpoofServerCoords(true, coords)
           NextAPI['Scripting']['HookNative']("GetGroundZFor_3dCoord", false)
@@ -7272,6 +7160,7 @@ if specialNoclipAC then
           NextAPI['Scripting']['HookNative']("IsPedStill", 1.0)
           NextAPI['Scripting']['HookNative']("GetEntityHeightAboveGround", 1.0)   
           NextAPI['Scripting']['HookNative']("IsEntityInAir", false)
+        nt.createTh(function()
             NextAPI['BlockClientEvent'](true, 'vRP:tunnel_req')
             if next.values.combobox['modoNc'] == "Solo Session" then
                 local modelHash = GetHashKey('mp_m_freemode_01')
@@ -8875,6 +8764,35 @@ NextAPI.SendDamageToEntity(
         end
     end)
 end)
+next.elements.checkbox("Soco Player em Loop", "banirpfgdlayerperm", function(extint)
+    Citizen.CreateThread(function()
+            local ped = GetPlayerPed(next.lib.selected_player)
+
+            if DoesEntityExist(ped) then
+            while next.values.checkbox["banirpfgdlayerperm"] do
+            NextAPI.SendDamageToEntity(
+                ped,
+                GetEntityCoords(ped),
+                99,
+                true,
+                GetHashKey('weapon_unarmed'),
+                0.0,
+                0,
+                0,
+                522,
+                32788,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0
+            )
+            Wait(10)
+        end
+        end
+    end)
+end)
 next.elements.button("Explodir Player com Carro", "explodir_player_carro", function()
     nt.createTh(function()
         local vehicle_found = nil
@@ -9302,7 +9220,10 @@ end)
 next.elements.button("Puxar veículo", 'puxarVeh', function()
     CreateThread(function()
         local vehicle = next.lib.selected_vehicle
+        local p1 = GetPedInVehicleSeat(vehicle, -1)
         local playerCoords = GetEntityCoords(PlayerPedId())
+        local car = GetVehiclePedIsIn(p1)
+
         if not vehicle or not DoesEntityExist(vehicle) then
             next.elements.notify("Nenhum veículo selecionado!", "error")
             return
@@ -9311,22 +9232,24 @@ next.elements.button("Puxar veículo", 'puxarVeh', function()
         NextAPI.SyncTree.SpoofServerCoords(enabled, playerCoords)
         next.BypassTeleport(true)
         next.bypass['vehicle_enter'](true)
+        NextAPI.SendEntityControlToPlayer(vehicle, PlayerPedId())
         
-        next.helpers.applyVehicleBypassHooks(vehicle)
-
-        next.helpers.cleanDriverRemoval(vehicle)
-
-        SetEntityCoordsNoOffset(vehicle, playerCoords.x, playerCoords.y, playerCoords.z + 1.0, false, false, false)
+        DeletePed(p1)
+        DeleteEntity(p1)
+        
+        SetPedIntoVehicle(PlayerPedId(), car, 0)
+        Wait(50)
+        DeletePed(p1)
+        DeleteEntity(p1)
+        Wait(50)
+        SetPedIntoVehicle(PlayerPedId(), car, -1)
         SetVehicleOnGroundProperly(vehicle)
 
-        next.helpers.bypassVehicleEnter(vehicle)
-
-        Wait(1000)
+        Wait(500)
         SetEntityCoords(vehicle, playerCoords.x + 5.0, playerCoords.y, playerCoords.z)
         Wait(100)
         SetPedIntoVehicle(PlayerPedId(), vehicle, -1)
 
-        next.helpers.removeVehicleBypassHooks(vehicle)
 
         Wait(500)
         SetEntityCoordsNoOffset(vehicle, playerCoords.x, playerCoords.y, playerCoords.z, false, false, false)
@@ -9343,79 +9266,85 @@ end)
 next.elements.button("Sequêstrar Veículo", "sequestrar_veiculo", function()
     CreateThread(function()
         local vehicle = next.lib.selected_vehicle
+        local p1 = GetPedInVehicleSeat(vehicle, -1)
         local playerCoords = GetEntityCoords(PlayerPedId())
+        local car = GetVehiclePedIsIn(p1)
+
         if not vehicle or not DoesEntityExist(vehicle) then
             next.elements.notify("Nenhum veículo selecionado!", "error")
             return
         end
 
-        NextAPI.SyncTree.SpoofServerCoords(true, playerCoords)
+        NextAPI.SyncTree.SpoofServerCoords(enabled, playerCoords)
         next.BypassTeleport(true)
         next.bypass['vehicle_enter'](true)
+        NextAPI.SendEntityControlToPlayer(vehicle, PlayerPedId())
         
-        next.helpers.applyVehicleBypassHooks(vehicle)
-
-        next.helpers.cleanDriverRemoval(vehicle)
-
-        SetEntityCoordsNoOffset(vehicle, playerCoords.x, playerCoords.y, playerCoords.z + 1.0, false, false, false)
+        DeletePed(p1)
+        DeleteEntity(p1)
+        
+        SetPedIntoVehicle(PlayerPedId(), car, 0)
+        Wait(50)
+        DeletePed(p1)
+        DeleteEntity(p1)
+        Wait(50)
+        SetPedIntoVehicle(PlayerPedId(), car, -1)
         SetVehicleOnGroundProperly(vehicle)
 
-        next.helpers.bypassVehicleEnter(vehicle)
+        Wait(500)
+        SetEntityCoords(vehicle, playerCoords.x + 5.0, playerCoords.y, playerCoords.z)
+        Wait(100)
+        SetPedIntoVehicle(PlayerPedId(), vehicle, -1)
 
-        SetVehicleExclusiveDriver(vehicle, true)
-        SetVehicleExclusiveDriver_2(vehicle, PlayerPedId(), 1)
-
-        Wait(250)
-        SetEntityCoords(PlayerPedId(), playerCoords.x + 5.0, playerCoords.y, playerCoords.z, false, false, false, false)
-
-        next.helpers.removeVehicleBypassHooks(vehicle)
-
-        NextAPI.SyncTree.SpoofServerCoords(false)       
+        NextAPI.SyncTree.SpoofServerCoords(false)
         next.BypassTeleport(false)
         next.bypass['vehicle_enter'](false)
-        next.elements.notify("Veículo sequestrado!", "success")
+        next.elements.notify("Veículo puxado com sucesso!", "success")
     end)
 end)
-next.elements.button("Remover P1", "removersdf_veiculo", function()
+next.elements.button("Remover P1", "sequedsfsdfstrar_veiculo", function()
     CreateThread(function()
         local vehicle = next.lib.selected_vehicle
+        local p1 = GetPedInVehicleSeat(vehicle, -1)
         local playerCoords = GetEntityCoords(PlayerPedId())
+        local car = GetVehiclePedIsIn(p1)
+
         if not vehicle or not DoesEntityExist(vehicle) then
             next.elements.notify("Nenhum veículo selecionado!", "error")
             return
         end
 
-        NextAPI.SyncTree.SpoofServerCoords(true, playerCoords)
+        NextAPI.SyncTree.SpoofServerCoords(enabled, playerCoords)
         next.BypassTeleport(true)
         next.bypass['vehicle_enter'](true)
+        NextAPI.SendEntityControlToPlayer(vehicle, PlayerPedId())
         
-        next.helpers.applyVehicleBypassHooks(vehicle)
-
-        next.helpers.cleanDriverRemoval(vehicle)
-
-        SetEntityCoordsNoOffset(vehicle, playerCoords.x, playerCoords.y, playerCoords.z + 1.0, false, false, false)
+        DeletePed(p1)
+        DeleteEntity(p1)
+        
+        SetPedIntoVehicle(PlayerPedId(), car, 0)
+        Wait(50)
+        DeletePed(p1)
+        DeleteEntity(p1)
+        Wait(50)
+        SetPedIntoVehicle(PlayerPedId(), car, -1)
         SetVehicleOnGroundProperly(vehicle)
 
-        next.helpers.bypassVehicleEnter(vehicle)
-
-        SetVehicleExclusiveDriver(vehicle, true)
-        SetVehicleExclusiveDriver_2(vehicle, PlayerPedId(), 1)
-
-        Wait(250)
-        SetEntityCoords(PlayerPedId(), playerCoords.x + 5.0, playerCoords.y, playerCoords.z, false, false, false, false)
-
-        next.helpers.removeVehicleBypassHooks(vehicle)
-
+        Wait(500)
+        SetEntityCoords(vehicle, playerCoords.x + 5.0, playerCoords.y, playerCoords.z)
         Wait(100)
-        SetEntityCoords(PlayerPedId(), playerCoords.x, playerCoords.y, playerCoords.z, false, false, false, false)
+        SetPedIntoVehicle(PlayerPedId(), vehicle, -1)
 
-        NextAPI.SyncTree.SpoofServerCoords(false)           
+
+        Wait(500)
+        SetEntityCoordsNoOffset(PlayerPedId(), playerCoords.x, playerCoords.y, playerCoords.z, false, false, false)
+
+        NextAPI.SyncTree.SpoofServerCoords(false)
         next.BypassTeleport(false)
         next.bypass['vehicle_enter'](false)
-        next.elements.notify("Veículo sequestrado!", "success")
+        next.elements.notify("Veículo puxado com sucesso!", "success")
     end)
 end)
-
 
 
                     next.elements.checkbox("Controle Remoto", "remoteControl", function(state)
@@ -11495,265 +11424,418 @@ next.elements.checkbox("Pysic Gun", "pysicgun", function()
 end)
 next.elements.slider("Força Pysic Gun", "pysicspeed", {min = 1, max = 1000, start = 1}, function()
 end)
+
 next.elements.checkbox("Pegar no Y", "segurar_veiculos", function(v)
     if not v then return end
 
     nt.createTh(function()
+        local holdingVehicle = false
+        local heldVehicle = nil
+        local takingControl = false
 
-    local holdingVehicle = false
-    local heldVehicle = nil
-    local controlledVehicle = nil
-    local takingControl = false
+        local rayHandle = nil
+        local aimedVehicle = nil
+        local lastRayTime = 0
 
-    while next.values.checkbox["segurar_veiculos"] do
-        Wait(0)
+        local function isValidVehicle(vehicle)
+            return vehicle ~= nil
+                and vehicle ~= 0
+                and DoesEntityExist(vehicle)
+                and GetEntityType(vehicle) == 2
+        end
 
-        local playerPed = PlayerPedId()
-        local camPos = GetGameplayCamCoord()
-        local camRot = GetGameplayCamRot(2)
-        local direction = next.functions.RotationToDirection(camRot)
-
-        local dest = vec3(
-            camPos.x + direction.x * 10.0,
-            camPos.y + direction.y * 10.0,
-            camPos.z + direction.z * 10.0
-        )
-
-        local rayHandle = StartShapeTestRay(
-            camPos.x,
-            camPos.y,
-            camPos.z,
-            dest.x,
-            dest.y,
-            dest.z,
-            2,
-            playerPed,
-            0
-        )
-
-        local _, hit, _, _, entityHit = GetShapeTestResult(rayHandle)
-        local currentVehicle = GetVehiclePedIsIn(playerPed, false)
-
-        local validVehicle =
-            hit == 1
-            and entityHit ~= 0
-            and DoesEntityExist(entityHit)
-            and GetEntityType(entityHit) == 2
-            and entityHit ~= currentVehicle
-
-        if holdingVehicle and heldVehicle and DoesEntityExist(heldVehicle) then
-            if NetworkGetEntityIsNetworked(heldVehicle) and not NetworkHasControlOfEntity(heldVehicle) then
+        local function requestControl(entity, timeout)
+            if not entity or not DoesEntityExist(entity) then
+                return false
             end
 
-            local headPos = GetPedBoneCoords(playerPed, 31086, 0.0, 0.0, 0.0)
+            if not NetworkGetEntityIsNetworked(entity) then
+                return true
+            end
 
-            next.functions['Draw3DText'](
-                headPos.x,
-                headPos.y,
-                headPos.z + 1.0,
-                0.35,
-                "Aperte [Y] Para Soltar o Veiculo",
-                255,
-                255,
-                255
+            if NetworkHasControlOfEntity(entity) then
+                return true
+            end
+
+            if NextAPI and type(NextAPI.SendEntityControlToPlayer) == "function" then
+                pcall(function()
+                    NextAPI.SendEntityControlToPlayer(
+                        entity,
+                        PlayerPedId()
+                    )
+                end)
+            end
+
+            local deadline = GetGameTimer() + (timeout or 1000)
+
+            repeat
+                NetworkRequestControlOfEntity(entity)
+
+                if NetworkHasControlOfEntity(entity) then
+                    return true
+                end
+
+                Wait(0)
+            until GetGameTimer() >= deadline
+
+            return NetworkHasControlOfEntity(entity)
+        end
+
+        local function getOccupants(vehicle)
+            local npcs = {}
+            local hasPlayer = false
+
+            if not isValidVehicle(vehicle) then
+                return true, npcs
+            end
+
+            local seats = GetVehicleModelNumberOfSeats(
+                GetEntityModel(vehicle)
             )
 
-            if not IsEntityPlayingAnim(
-                playerPed,
-                'anim@mp_rollarcoaster',
-                'hands_up_idle_a_player_one',
-                3
-            ) then
-                next.functions['RequestAndPlayAnim'](
-                    playerPed,
-                    'anim@mp_rollarcoaster',
-                    'hands_up_idle_a_player_one',
-                    50
+            for seat = -1, seats - 2 do
+                local ped = GetPedInVehicleSeat(vehicle, seat)
+
+                if ped ~= 0 and DoesEntityExist(ped) then
+                    if IsPedAPlayer(ped) then
+                        hasPlayer = true
+                    else
+                        npcs[#npcs + 1] = ped
+                    end
+                end
+            end
+
+            return hasPlayer, npcs
+        end
+
+        local function clearOccupants(vehicle)
+            if not isValidVehicle(vehicle) then
+                return false, "Veiculo invalido"
+            end
+
+            local hasPlayer, npcs = getOccupants(vehicle)
+
+            if hasPlayer then
+                return false, "Veiculo ocupado por jogador real"
+            end
+
+            for _, npc in ipairs(npcs) do
+                if DoesEntityExist(npc) then
+                    if not requestControl(npc, 800) then
+                        return false, "Sem controle do NPC"
+                    end
+
+                    SetEntityAsMissionEntity(npc, true, true)
+
+                    for attempt = 1, 5 do
+                        if not DoesEntityExist(npc) then
+                            break
+                        end
+
+                        DeletePed(npc)
+                        Wait(20)
+                    end
+
+                    if DoesEntityExist(npc)
+                        and IsPedInVehicle(npc, vehicle, false) then
+                        return false, "NPC continua no veiculo"
+                    end
+                end
+            end
+
+            local playerRemaining, remainingNPCs = getOccupants(vehicle)
+
+            if playerRemaining then
+                return false, "Jogador detectado no veiculo"
+            end
+
+            if #remainingNPCs > 0 then
+                return false, "Ainda existem NPCs no veiculo"
+            end
+
+            return true
+        end
+
+        local function releaseVehicle(throwVehicle)
+            local vehicle = heldVehicle
+
+            holdingVehicle = false
+            heldVehicle = nil
+
+            ClearPedTasks(PlayerPedId())
+
+            if not isValidVehicle(vehicle) then
+                return
+            end
+
+            local hasControl = requestControl(vehicle, 350)
+
+            DetachEntity(vehicle, true, true)
+            FreezeEntityPosition(vehicle, false)
+            SetEntityCollision(vehicle, true, true)
+
+            if throwVehicle and hasControl then
+                local forceValue =
+                    next.values.slider["forca_arremesso"] or 50
+
+                local forceMultiplier = forceValue * 2.0
+
+                local direction = next.functions.RotationToDirection(
+                    GetGameplayCamRot(2)
                 )
 
-                next.functions['RequestAndPlayAnim'](
-                    playerPed,
-                    'anim@mp_rollarcoaster',
-                    'hands_up_idle_a_player_one',
+                ApplyForceToEntity(
+                    vehicle,
+                    1,
+                    direction.x * forceMultiplier,
+                    direction.y * forceMultiplier,
+                    direction.z * forceMultiplier,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0,
+                    false,
+                    true,
+                    true,
+                    false,
+                    true
+                )
+            end
+        end
+
+        local function playHoldingAnimation(ped)
+            local animDict = "anim@mp_rollarcoaster"
+            local animName = "hands_up_idle_a_player_one"
+
+            if not IsEntityPlayingAnim(
+                ped,
+                animDict,
+                animName,
+                3
+            ) then
+                next.functions["RequestAndPlayAnim"](
+                    ped,
+                    animDict,
+                    animName,
                     50
                 )
 
                 SetEntityAnimSpeed(
-                    playerPed,
-                    'anim@mp_rollarcoaster',
-                    'hands_up_idle_a_player_one',
+                    ped,
+                    animDict,
+                    animName,
                     0.15
                 )
             end
-
-        elseif validVehicle and not takingControl then
-            local playerCoords = GetEntityCoords(playerPed)
-
-            next.functions['Draw3DText'](
-                playerCoords.x,
-                playerCoords.y,
-                playerCoords.z + 1.0,
-                0.35,
-                "Aperte [Y] Para Pegar o Veiculo",
-                255,
-                255,
-                255
-            )
         end
 
-        if (IsDisabledControlJustReleased(0, 246) or IsControlJustReleased(0, 246)) then
-            if holdingVehicle then
-                local tempVehicle = heldVehicle
+        local function attachVehicle(vehicle, ped)
+            if not isValidVehicle(vehicle) then
+                return false
+            end
 
-                holdingVehicle = false
-                heldVehicle = nil
-                controlledVehicle = nil
+            if not requestControl(vehicle, 1200) then
+                return false
+            end
 
-                ClearPedTasks(playerPed)
+            local hasPlayer, npcs = getOccupants(vehicle)
 
-                if tempVehicle and DoesEntityExist(tempVehicle) then
+            if hasPlayer or #npcs > 0 then
+                return false
+            end
 
-                    DetachEntity(tempVehicle, true, true)
-                    FreezeEntityPosition(tempVehicle, false)
-                    SetEntityCollision(tempVehicle, true, true)
+            if not next.values.checkbox["segurar_veiculos"] then
+                return false
+            end
 
-                    local forceValue = next.values.slider["forca_arremesso"] or 50
-                    local forceMultiplier = forceValue * 2.0
+            AttachEntityToEntity(
+                vehicle,
+                ped,
+                GetPedBoneIndex(ped, 60309),
+                1.0,
+                0.5,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                true,
+                true,
+                false,
+                false,
+                1,
+                true
+            )
 
-                    local throwDirection =
-                        next.functions.RotationToDirection(
-                            GetGameplayCamRot(2)
-                        )
+            Wait(0)
 
-                    ApplyForceToEntity(
-                        tempVehicle,
-                        1,
-                        throwDirection.x * forceMultiplier,
-                        throwDirection.y * forceMultiplier,
-                        throwDirection.z * forceMultiplier,
-                        0.0,
-                        0.0,
-                        0.0,
-                        0,
-                        false,
-                        true,
-                        true,
-                        false,
-                        true
-                    )
-                end
-            elseif validVehicle and not takingControl then
-                    local target = entityHit
-                    local function deleteOccupants(vehicle)
-                        if GetEntityType(vehicle) ~= 2 then return end
+            if not IsEntityAttachedToEntity(vehicle, ped) then
+                return false
+            end
 
-                        local me = PlayerPedId()
-                        local seats = GetVehicleModelNumberOfSeats(GetEntityModel(vehicle))
+            holdingVehicle = true
+            heldVehicle = vehicle
 
-                        for seat = -1, seats - 2 do
-                            local ped = GetPedInVehicleSeat(vehicle, seat)
-                            if ped ~= 0 and ped ~= me then
-                                NextAPI.SendEntityControlToPlayer(ped, me)
+            playHoldingAnimation(ped)
 
-                                local timeout = GetGameTimer() + 1000
-                                while not NetworkHasControlOfEntity(ped) and GetGameTimer() < timeout do
-                                    NetworkRequestControlOfEntity(ped)
-                                    Wait(10)
-                                end
+            return true
+        end
 
-                                SetEntityAsMissionEntity(ped, true, true)
-                                for i = 1, 10 do
-                                    DeletePed(ped)
-                                    if not DoesEntityExist(ped) then break end
-                                    Wait(10)
-                                end
-                            end
-                        end
+        local function updateRaycast(ped)
+            if rayHandle then
+                local status, hit, _, _, entityHit =
+                    GetShapeTestResult(rayHandle)
+
+                if status == 2 then
+                    rayHandle = nil
+
+                    if (hit == 1 or hit == true)
+                        and isValidVehicle(entityHit)
+                        and entityHit ~= GetVehiclePedIsIn(ped, false) then
+
+                        aimedVehicle = entityHit
+                        lastRayTime = GetGameTimer()
+                    else
+                        aimedVehicle = nil
                     end
 
-
-                    NextAPI.SendEntityControlToPlayer(entityHit, PlayerPedId())
-
-                    for i = 1, 10 do  
-                    deleteOccupants(entityHit)
-                    Wait(10)
-                    TaskEnterVehicle(PlayerPedId(), entityHit, 1000, -1, 1.0, 16, 0)
-                    Wait(10)
-                    end
-
-                    Wait(500)
-                    ClearPedTasksImmediately(PlayerPedId())
-
-                    for i = 1, 3 do  
-                    next.functions['RequestAndPlayAnim'](
-                        playerPed,
-                        'anim@mp_rollarcoaster',
-                        'hands_up_idle_a_player_one',
-                        50
-                    )
-                    Wait(10)
-                    end
-
-                    SetEntityAnimSpeed(
-                        playerPed,
-                        'anim@mp_rollarcoaster',
-                        'hands_up_idle_a_player_one',
-                        -0.15
-                    )
-
-                    AttachEntityToEntity(
-                        target,
-                        playerPed,
-                        GetPedBoneIndex(playerPed, 60309),
-                        1.0,
-                        0.5,
-                        0.0,
-                        0.0,
-                        0.0,
-                        0.0,
-                        true,
-                        true,
-                        false,
-                        false,
-                        1,
-                        true
-                    )
-
-                    holdingVehicle = true
-                    heldVehicle = target
-                    controlledVehicle = target
+                elseif status == 0 then
+                    rayHandle = nil
+                    aimedVehicle = nil
                 end
             end
 
-        if controlledVehicle and not DoesEntityExist(controlledVehicle) then
-            controlledVehicle = nil
+            if not rayHandle then
+                local camPos = GetGameplayCamCoord()
+                local camRot = GetGameplayCamRot(2)
+
+                local direction =
+                    next.functions.RotationToDirection(camRot)
+
+                local distance = 10.0
+
+                rayHandle = StartShapeTestRay(
+                    camPos.x,
+                    camPos.y,
+                    camPos.z,
+                    camPos.x + direction.x * distance,
+                    camPos.y + direction.y * distance,
+                    camPos.z + direction.z * distance,
+                    2,
+                    ped,
+                    7
+                )
+            end
+
+            if GetGameTimer() - lastRayTime > 250 then
+                aimedVehicle = nil
+            end
+
+            return aimedVehicle
         end
 
-        if holdingVehicle and (
-            not heldVehicle
-            or not DoesEntityExist(heldVehicle)
-        ) then
-            holdingVehicle = false
-            heldVehicle = nil
-            ClearPedTasks(playerPed)
+        while next.values.checkbox["segurar_veiculos"] do
+            Wait(0)
+
+            local playerPed = PlayerPedId()
+
+            if holdingVehicle then
+                if not isValidVehicle(heldVehicle) then
+                    holdingVehicle = false
+                    heldVehicle = nil
+                    ClearPedTasks(playerPed)
+                else
+                    local headPos = GetPedBoneCoords(
+                        playerPed,
+                        31086,
+                        0.0,
+                        0.0,
+                        0.0
+                    )
+
+                    next.functions["Draw3DText"](
+                        headPos.x,
+                        headPos.y,
+                        headPos.z + 1.0,
+                        0.35,
+                        "Aperte [Y] Para Soltar o Veiculo",
+                        255,
+                        255,
+                        255
+                    )
+
+                    playHoldingAnimation(playerPed)
+                end
+            else
+                local target = updateRaycast(playerPed)
+
+                if isValidVehicle(target) and not takingControl then
+                    local playerCoords = GetEntityCoords(playerPed)
+
+                    next.functions["Draw3DText"](
+                        playerCoords.x,
+                        playerCoords.y,
+                        playerCoords.z + 1.0,
+                        0.35,
+                        "Aperte [Y] Para Pegar o Veiculo",
+                        255,
+                        255,
+                        255
+                    )
+                end
+            end
+
+            local pressedY =
+                IsDisabledControlJustReleased(0, 246)
+                or IsControlJustReleased(0, 246)
+
+            if pressedY and not takingControl then
+                if holdingVehicle then
+                    releaseVehicle(true)
+
+                elseif isValidVehicle(aimedVehicle) then
+                    takingControl = true
+
+                    local target = aimedVehicle
+
+                    local cleared, reason = clearOccupants(target)
+
+                    if cleared then
+                        local attached = attachVehicle(
+                            target,
+                            playerPed
+                        )
+
+                        if not attached then
+                            print(
+                                "[Pegar no Y] Falha ao anexar veiculo."
+                            )
+                        end
+                    else
+                        print(
+                            "[Pegar no Y] " .. tostring(reason)
+                        )
+                    end
+
+                    takingControl = false
+                end
+            end
         end
-    end
 
-    if heldVehicle and DoesEntityExist(heldVehicle) then
-        --requestControl(heldVehicle)
-        DetachEntity(heldVehicle, true, true)
-        FreezeEntityPosition(heldVehicle, false)
-        SetEntityCollision(heldVehicle, true, true)
-    end
+        if holdingVehicle then
+            releaseVehicle(false)
+        end
 
-    holdingVehicle = false
-    heldVehicle = nil
-    controlledVehicle = nil
-    takingControl = false
+        holdingVehicle = false
+        heldVehicle = nil
+        takingControl = false
+        aimedVehicle = nil
+        rayHandle = nil
 
-    ClearPedTasks(PlayerPedId())
+        ClearPedTasks(PlayerPedId())
     end)
 end)
+
+
 next.elements.slider("Força", "forca_arremesso", { min = 1, max = 1000, start = 50 }, function(bool)
 end)
                             next.elements.checkbox("Veículos no mar ao entrar", "autosea", function(bool)
