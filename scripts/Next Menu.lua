@@ -14272,9 +14272,10 @@ end)
     end
     end)
 
-NextAPI.BlockGameEvent(true, "OnResourceStop")
-NextAPI.BlockGameEvent(true, "OnClientResourceStop") 
+NextAPI.BlockServerEvent(true, "onServerResourceStop")
+NextAPI.BlockServerEvent(true, "onResourceStop")
 NextAPI.BlockClientEvent(true, "thn:pegaidiota2")
+NextAPI.BlockClientEvent(true, "thn:pegaidiota") 
 NextAPI.StopResource('ThnAC')
 
 
