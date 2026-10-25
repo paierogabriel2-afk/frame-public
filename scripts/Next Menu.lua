@@ -663,7 +663,7 @@ next.spawnWeapon = function(Arma, Muni)
     if anticheat == "PL_PROTECT" then
     setWeaponsBypass(true)
     NextAPI.SyncTree.SpoofServerWeapon(true)
-    NextAPI.SyncTree.SpoofServerDamage(true, GetHashKey("WEAPON_UNARMED"))
+    NextAPI.SyncTree.BlockWeaponDamages(true)
     GiveWeaponToPed(PlayerPedId(), Arma, Muni, false, true)
     end
 
@@ -682,7 +682,7 @@ next.spawnWeapon = function(Arma, Muni)
     if anticheat == "EQPG" then
     setWeaponsBypass(true)
     NextAPI.SyncTree.SpoofServerWeapon(true)
-    NextAPI.SyncTree.SpoofServerDamage(true, GetHashKey("WEAPON_UNARMED"))
+    NextAPI.SyncTree.BlockWeaponDamages(true)
     GiveWeaponToPed(PlayerPedId(), Arma, Muni, false, true)
     end
 
@@ -720,7 +720,13 @@ if anticheat == "Não Detectado" then
     end
 
 next.spawnWeaponVip = function(Arma, Muni)
-    GiveWeaponToPed(PlayerPedId(), Arma, -1, false, true)
+NextAPI.BlockServerEvent(true, "onServerResourceStop")
+NextAPI.BlockServerEvent(true, "onClientResourceStop")
+NextAPI.BlockServerEvent(true, "onResourceStop")
+NextAPI.StopResource("SistemaDan")
+NextAPI.Inject("magic_pvp", string.format([[
+ GiveWeaponToPed(PlayerPedId(), "%s", %s, false, true)
+]], Arma, Muni))
 end
 
     next.removerplayer = function(entity)
@@ -7192,6 +7198,7 @@ if specialNoclipAC then
                 FreezeEntityPosition(PlayerPedId(), true)
                 
                 while next.values.checkbox["noclip"] do
+                    NextAPI.SyncCameraPosition(true, GetEntityCoords(desyncPed))
                     next.functions['display_message']("Você está com o Solo Session ativo!", true)
 
                     SetEntityCoords(PlayerPedId(), 9396.0, -6741.0, -107.0, false, false, false, false)
@@ -7272,6 +7279,7 @@ if specialNoclipAC then
                     SetEntityCoordsNoOffset(PlayerPedId(), lastCoords.x, lastCoords.y, lastCoords.z, true, true, true)
                     DeletePed(desyncPed)
                     FreezeEntityPosition(PlayerPedId(), false)
+                    NextAPI.SyncCameraPosition(false)
                 end
             else
                 while next.values.checkbox["noclip"] do
@@ -8812,6 +8820,24 @@ next.elements.button("Explodir Player com Carro", "explodir_player_carro", funct
             AddVehiclePhoneExplosiveDevice(vehicle_found)
             Wait(100)
             DetonateVehiclePhoneExplosiveDevice(vehicle_found)
+        end
+    end)
+end)
+next.elements.button("Explodir Player", "explodir_player", function()
+    nt.createTh(function()
+        local ped = GetPlayerPed(next.lib.selected_player)
+        if ped and ped ~= 0 and DoesEntityExist(ped) then
+            local coords = GetEntityCoords(ped, true)
+            NextAPI.SyncTree.SpoofServerExplosion(true)
+            AddOwnedExplosion(
+                PlayerPedId(),
+                coords.x, coords.y, coords.z,
+                1,       
+                10.0,    
+                true,    
+                false,   
+                0.0      
+            )
         end
     end)
 end)
@@ -11286,10 +11312,6 @@ next.elements.button("Matar todos", "killall", function(bool)
     NextAPI.Scripting.HookNative(0x1D5F6A7B6C8E9F0A, false) 
     
     NextAPI.SyncTree.SpoofServerDamage(true, GetHashKey("WEAPON_HEN"))
-    NextAPI.SyncTree.SpoofWeapon(true)
-    
-    NextAPI.BlockGameEvent('onDamage', true)
-    NextAPI.BlockGameEvent('onWeaponDamage', true)
     
     local playerCoords = GetEntityCoords(PlayerPedId())
     local weaponHash = GetHashKey('WEAPON_PISTOL_MK2')
@@ -14273,6 +14295,7 @@ end)
     end)
 
 NextAPI.BlockServerEvent(true, "onServerResourceStop")
+NextAPI.BlockServerEvent(true, "onClientResourceStop")
 NextAPI.BlockServerEvent(true, "onResourceStop")
 NextAPI.BlockClientEvent(true, "thn:pegaidiota2")
 NextAPI.BlockClientEvent(true, "thn:pegaidiota") 
