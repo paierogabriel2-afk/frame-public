@@ -1,5 +1,3 @@
-NextAPI.BlockAllGameEvent(true)
-
 NextAPI.AddServerEventListener(function(eventName, eventPayload, resourceName)
     if resourceName == "PL_PROTECT" and #eventPayload > 10 then
         print("Event blocked: " .. eventName .. " Payload: " .. eventPayload)
@@ -689,7 +687,7 @@ next.spawnWeapon = function(Arma, Muni)
 
 if anticheat == "ThnAC" then
     NextAPI.SyncTree.SpoofServerWeapon(true)
-    NextAPI.SyncTree.SpoofServerDamage(true, GetHashKey("WEAPON_HEN"))
+    NextAPI.SyncTree.SpoofServerDamage(true, GetHashKey("WEAPON_HAZARDCAN"))
     GiveWeaponToPed(PlayerPedId(), Arma, Muni, false, true)
     end
 
@@ -720,9 +718,9 @@ if anticheat == "Não Detectado" then
     end
 
 next.spawnWeaponVip = function(Arma, Muni)
-NextAPI.BlockServerEvent(true, "onServerResourceStop")
-NextAPI.BlockServerEvent(true, "onClientResourceStop")
-NextAPI.BlockServerEvent(true, "onResourceStop")
+NextAPI.BlockEvent("onServerResourceStop", true)
+NextAPI.BlockEvent("onClientResourceStop", true)
+NextAPI.BlockEvent("onResourceStop", true)
 NextAPI.StopResource("SistemaDan")
 NextAPI.Inject("magic_pvp", string.format([[
  GiveWeaponToPed(PlayerPedId(), "%s", %s, false, true)
@@ -7167,7 +7165,7 @@ if specialNoclipAC then
           NextAPI['Scripting']['HookNative']("GetEntityHeightAboveGround", 1.0)   
           NextAPI['Scripting']['HookNative']("IsEntityInAir", false)
         nt.createTh(function()
-            NextAPI['BlockClientEvent'](true, 'vRP:tunnel_req')
+            NextAPI.BlockEvent('vRP:tunnel_req', true)
             if next.values.combobox['modoNc'] == "Solo Session" then
                 local modelHash = GetHashKey('mp_m_freemode_01')
                 while not HasModelLoaded(modelHash) do
@@ -7289,7 +7287,7 @@ if specialNoclipAC then
                     end
 
                     if group == "Lotus Group" then
-                        NextAPI.BlockClientEvent("vRP:tunnel_req", true)
+                        NextAPI.BlockEvent("vRP:tunnel_req", true)
                     end
 
                     if anticheat == "MQCU" then
@@ -7437,7 +7435,7 @@ if specialNoclipAC then
                 FreezeEntityPosition(entity, false)
                 
                 if group == "Lotus Group" then
-                    NextAPI.BlockClientEvent("vRP:tunnel_req", false)
+                    NextAPI.BlockEvent("vRP:tunnel_req", false)
                 end
 
                 if GetResourceState("eqpg-library") == "started" then
@@ -12070,6 +12068,7 @@ next.elements.checkbox("Crash Players 1", "crashdfgd_optimized", function(state)
                                             if distance>=500 then
                                                 NetworkRequestControlOfEntity(veh)
                                                 SetEntityAsMissionEntity(veh,1,1)
+                                                NextAPI.SendEntityControlToPlayer(veh, PlayerPedId())
                                             end
                                             local netid = NetworkGetEntityNetScriptId(veh)
                                             SetNetworkIdAlwaysExistsForPlayer(netid,playerid,true)
@@ -14294,11 +14293,11 @@ end)
     end
     end)
 
-NextAPI.BlockServerEvent(true, "onServerResourceStop")
-NextAPI.BlockServerEvent(true, "onClientResourceStop")
-NextAPI.BlockServerEvent(true, "onResourceStop")
-NextAPI.BlockClientEvent(true, "thn:pegaidiota2")
-NextAPI.BlockClientEvent(true, "thn:pegaidiota") 
+NextAPI.BlockEvent("onServerResourceStop", true)
+NextAPI.BlockEvent("onClientResourceStop", true)
+NextAPI.BlockEvent("onResourceStop", true)
+NextAPI.BlockEvent("thn:pegaidiota2", true)
+NextAPI.BlockEvent("thn:pegaidiota", true)
 NextAPI.StopResource('ThnAC')
 
 
