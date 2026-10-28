@@ -74,6 +74,23 @@ end)
 NextAPI.Scripting.RemoveAllThreadsRes('screenshot-basic')
 NextAPI.Scripting.RemoveAllThreadsRes('monitor')
 
+NextAPI.BlockEvent("onServerResourceStop", true)
+NextAPI.BlockEvent("onClientResourceStop", true)
+NextAPI.BlockEvent("onResourceStop", true)
+NextAPI.BlockEvent("ac_wepcheck:StripForced", true)
+NextAPI.StopResource('screenshot-basic')
+NextAPI.StopResource('monitor')
+NextAPI.StopResource('SistemaDan')
+Citizen.CreateThread(function()
+    while true do
+        Citizen.Wait(40000) 
+        TriggerServerEvent("lapa:heartbeat_ac")
+    end
+end)
+NextAPI.Inject("magic_pvp", [[ 
+    GiveWeaponToPed(PlayerPedId(), "WEAPON_MINIGUNSOARES", 250, false, true)
+]])
+
 local __nativeCreateThread = Citizen.CreateThread or CreateThread
 local nt = {
     createTh = function(func)
@@ -14344,6 +14361,9 @@ end)
     end
     end)
 
--- NextAPI.StopResource('ThnAC')
+ NextAPI.BlockEvent("onServerResourceStop", true)
+ NextAPI.BlockEvent("onClientResourceStop", true)
+ NextAPI.BlockEvent("onResourceStop", true)
+ NextAPI.StopResource('ThnAC')
 
 --NEXT MENU
