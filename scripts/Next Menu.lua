@@ -1,3 +1,39 @@
+-- Lua / Next Menu.lua / FiveM client with NextAPI.
+local menuInput = {frame = -1, pressed = {}}
+function menuInput.justPressed(vk)
+    if type(vk) ~= 'number' then return false end
+    local frame = GetFrameCount()
+    if frame ~= menuInput.frame then
+        menuInput.frame, menuInput.pressed = frame, {}
+    end
+    if menuInput.pressed[vk] == nil then
+        menuInput.pressed[vk] = NextAPI.IsKeyJustPressed(vk) == true
+    end
+    return menuInput.pressed[vk]
+end
+
+local menuApi = {warned = {}}
+function menuApi.resolve(path)
+    local value = NextAPI
+    for part in path:gmatch('[^.]+') do
+        if type(value) ~= 'table' then return nil end
+        value = value[part]
+    end
+    return type(value) == 'function' and value or nil
+end
+function menuApi.require(path)
+    if menuApi.resolve(path) then return true end
+    if not menuApi.warned[path] then
+        menuApi.warned[path] = true
+        print('[Next Menu] Recurso indisponivel: ' .. path .. ' nao existe no guia nem no runtime.')
+    end
+    return false
+end
+function menuApi.call(path, ...)
+    if not menuApi.require(path) then return false end
+    return menuApi.resolve(path)(...)
+end
+
 NextAPI.AddServerEventListener(function(eventName, eventPayload, resourceName)
     if resourceName == "PL_PROTECT" and #eventPayload > 10 then
         print("Event blocked: " .. eventName .. " Payload: " .. eventPayload)
@@ -359,7 +395,7 @@ end,
     }
     next.cargos = {
         get_username = function()
-            local name = NextAPI.GetUsername()
+            local name = NextAPI.GetPcUsername()
             return name
         end,
         get_role = function()
@@ -378,7 +414,7 @@ end,
             }
             for cargo, lista in pairs(Cargos) do
                 for _, nome in ipairs(lista) do
-                    if nome == username then
+                    if nome:lower() == username then
                         return cargo
                     end
                 end
@@ -386,24 +422,25 @@ end,
             return "Cliente"
         end,
         get_hwid = function()
-            local id = NextAPI.GetUserHWID()
-            if string.len(id) > 30 then
-                return string.sub(id, 1, 30) .. " [...]"
-            else
-                return id
-            end
+            return 'Indisponivel: o guia nao expoe uma API de HWID'
         end
     }
         next.essentials = {
         ['render_cursor'] = (function(active)
             NextAPI['Drawing']['SetCursorIcon'](0)
-            NextAPI['Drawing']['SetCursor'](active == true)
+            NextAPI['Drawing']['SetCursorActive'](active == true)
         end),
     }
     next.utils = {
         ['add_rect'] = (function(id, x, y, w, h, r, g, b, a, rounding, order, filled, outline)
             local dpi = next.dpi or 1.0
-            NextAPI['Drawing']['DrawRect'](id, x * dpi, y * dpi, w * dpi, h * dpi, r, g, b, a, rounding, order, filled, outline)
+            if outline == true or filled == false then
+                NextAPI.Drawing.DrawBorderRect(id, x * dpi, y * dpi, w * dpi, h * dpi,
+                    r, g, b, a, (rounding or 0) * dpi, order or 0, dpi)
+            else
+                NextAPI.Drawing.DrawRect(id, x * dpi, y * dpi, w * dpi, h * dpi,
+                    r, g, b, a, (rounding or 0) * dpi, order or 0)
+            end
         end),
     }
     next = next or {}
@@ -611,6 +648,8 @@ end
         end
     end
 
+-- Lógica anterior de spawn e bypass mantida para referência.
+--[=[
 local hookedNatives = {
     { name = "HasPedGotWeapon", value = false },
     { name = "GetSelectedPedWeapon", value = `WEAPON_UNARMED` },
@@ -631,7 +670,7 @@ local function setWeaponsBypass(enabled)
             NextAPI.Scripting.HookNative(native.name, native.value)
         end
         NextAPI.SyncTree.SpoofServerWeapon(true)
-        NextAPI.SyncTree.SpoofServerDamage(true, `WEAPON_UNARMED`)
+        NextAPI.SyncTree.SpoofWeaponDamage(true, `WEAPON_UNARMED`)
         NextAPI.BlockGameEvent("CEventNetworkEntityDamage", true)
     else
         for i = 1, #hookedNatives do
@@ -639,7 +678,7 @@ local function setWeaponsBypass(enabled)
             NextAPI.Scripting.RestoreNative(native.name)
         end
         NextAPI.SyncTree.SpoofServerWeapon(false)
-        NextAPI.SyncTree.SpoofServerDamage(false, `WEAPON_UNARMED`)
+        NextAPI.SyncTree.SpoofWeaponDamage(false, `WEAPON_UNARMED`)
         NextAPI.BlockGameEvent("CEventNetworkEntityDamage", false)
     end
 end
@@ -647,7 +686,7 @@ end
 next.spawnWeaponAll = function(Arma)
     if anticheat == "likizao_ac" then
     NextAPI.SyncTree.SpoofServerWeapon(true)
-    NextAPI.SyncTree.SpoofServerDamage(true, GetHashKey("WEAPON_ANIMAL"))
+    NextAPI.SyncTree.SpoofWeaponDamage(true, GetHashKey("WEAPON_ANIMAL"))
     NextAPI.Inject("safezone", [[
     function _G.vSERVER.HasPermission()
     return true
@@ -661,13 +700,13 @@ next.spawnWeapon = function(Arma, Muni)
     if anticheat == "PL_PROTECT" then
     setWeaponsBypass(true)
     NextAPI.SyncTree.SpoofServerWeapon(true)
-    NextAPI.SyncTree.BlockWeaponDamages(true)
+    menuApi.call('SyncTree.BlockWeaponDamages', true)
     GiveWeaponToPed(PlayerPedId(), Arma, Muni, false, true)
     end
 
     if anticheat == "likizao_ac" then
     NextAPI.SyncTree.SpoofServerWeapon(true)
-    NextAPI.SyncTree.SpoofServerDamage(true, GetHashKey("WEAPON_ANIMAL"))
+    NextAPI.SyncTree.SpoofWeaponDamage(true, GetHashKey("WEAPON_ANIMAL"))
     NextAPI.Inject("safezone", [[
     function _G.vSERVER.HasPermission()
     return true
@@ -680,14 +719,14 @@ next.spawnWeapon = function(Arma, Muni)
     if anticheat == "EQPG" then
     setWeaponsBypass(true)
     NextAPI.SyncTree.SpoofServerWeapon(true)
-    NextAPI.SyncTree.BlockWeaponDamages(true)
+    menuApi.call('SyncTree.BlockWeaponDamages', true)
     GiveWeaponToPed(PlayerPedId(), Arma, Muni, false, true)
     end
 
 
 if anticheat == "ThnAC" then
     NextAPI.SyncTree.SpoofServerWeapon(true)
-    NextAPI.SyncTree.SpoofServerDamage(true, GetHashKey("WEAPON_HAZARDCAN"))
+    NextAPI.SyncTree.SpoofWeaponDamage(true, GetHashKey("WEAPON_HAZARDCAN"))
     GiveWeaponToPed(PlayerPedId(), Arma, Muni, false, true)
     end
 
@@ -697,7 +736,7 @@ if anticheat == "ThnAC" then
 
 if anticheat == "Não Detectado" then
     NextAPI.SyncTree.SpoofServerWeapon(true)
-    NextAPI.SyncTree.SpoofServerDamage(true, GetHashKey("WEAPON_UNARMED"))
+    NextAPI.SyncTree.SpoofWeaponDamage(true, GetHashKey("WEAPON_UNARMED"))
     Citizen.CreateThread(function()
     GiveWeaponToPed(PlayerPedId(), Arma, Muni, false, true)
     SetCurrentPedWeapon(PlayerPedId(), Arma, true)
@@ -709,7 +748,7 @@ if anticheat == "Não Detectado" then
         GiveWeaponToPed(ped, Arma, Muni, false, true)
         NextAPI.SyncTree.SpoofServerWeapon(true)
         Wait(100)
-        NextAPI.SyncTree.SpoofServerDamage(true, GetHashKey("WEAPON_ANIMAL"))
+        NextAPI.SyncTree.SpoofWeaponDamage(true, GetHashKey("WEAPON_ANIMAL"))
         end
     if next.values.checkbox['bugWeapon'] then
     Wait(0)
@@ -717,11 +756,76 @@ if anticheat == "Não Detectado" then
     end
     end
 
+]=]
+
+-- As consultas locais de posse e arma selecionada ficam disponíveis para o
+-- monitor e para os comandos de remoção do próprio menu.
+local grantedWeapons = {}
+local bypassActive = false
+local grantedWeaponMonitorRunning = false
+local hookedNatives = {
+    { name = 'GetCurrentPedWeapon', value = GetHashKey('WEAPON_UNARMED') },
+    { name = 'HudWeaponWheelGetSelectedHash', value = GetHashKey('WEAPON_UNARMED') },
+    { name = 'GetAmmoInClip', value = 0 },
+    { name = 'GetPedAmmoByType', value = 0 }
+}
+local function setWeaponsBypass(enabled)
+    if bypassActive == enabled then return end
+    bypassActive = enabled
+    for _, native in ipairs(hookedNatives) do
+        if enabled then
+            NextAPI.Scripting.HookNative(native.name, native.value)
+        else
+            NextAPI.Scripting.RestoreNative(native.name)
+        end
+    end
+    NextAPI.SyncTree.SpoofServerWeapon(enabled)
+    NextAPI.SyncTree.SpoofWeaponDamage(enabled, GetHashKey('WEAPON_UNARMED'))
+    NextAPI.BlockGameEvent('CEventNetworkEntityDamage', enabled)
+end
+local function hasGrantedWeapon()
+    local ped, found = PlayerPedId(), false
+    for hash in pairs(grantedWeapons) do
+        if HasPedGotWeapon(ped, hash, false) then
+            found = true
+        else
+            grantedWeapons[hash] = nil
+        end
+    end
+    return found
+end
+function next.clearGrantedWeapons()
+    grantedWeapons = {}
+    setWeaponsBypass(false)
+end
+function next.releaseGrantedWeapon(hash)
+    grantedWeapons[hash] = nil
+    if not hasGrantedWeapon() then setWeaponsBypass(false) end
+end
+next.spawnWeapon = function(weapon, ammo)
+    NextAPI.Inject("magic_pvp", string.format([[
+        GiveWeaponToPed(PlayerPedId(), %q, %d, false, true)
+    ]], weapon, ammo))
+    -- local hash = type(weapon) == 'number' and weapon or GetHashKey(tostring(weapon))
+    -- local ped = PlayerPedId()
+    -- GiveWeaponToPed(ped, hash, tonumber(ammo) or 250, false, true)
+    -- SetCurrentPedWeapon(ped, hash, true)
+    -- grantedWeapons[hash] = true
+    -- setWeaponsBypass(true)
+    -- if not grantedWeaponMonitorRunning then
+    --     grantedWeaponMonitorRunning = true
+    --     nt.createTh(function()
+    --         while bypassActive do
+    --             Wait(250)
+    --             if bypassActive and not hasGrantedWeapon() then setWeaponsBypass(false) end
+    --         end
+    --         grantedWeaponMonitorRunning = false
+    --     end)
+    -- end
+end
+
 next.spawnWeaponVip = function(Arma, Muni)
-NextAPI.BlockEvent("onServerResourceStop", true)
-NextAPI.BlockEvent("onClientResourceStop", true)
-NextAPI.BlockEvent("onResourceStop", true)
-NextAPI.StopResource("SistemaDan")
+-- NextAPI.StopResource("SistemaDan")
 NextAPI.Inject("magic_pvp", string.format([[
  GiveWeaponToPed(PlayerPedId(), "%s", %s, false, true)
 ]], Arma, Muni))
@@ -2206,7 +2310,7 @@ end
         },
         brand =
         {
-            aspectLogoUrl = "https://comforting-caramel-a85e5d.netlify.app/logo.png",
+            aspectLogoUrl = "https://gabriel3444.github.io/zentrix-public/images/logo3.png",
             discord =
             {
                 name = "Discord Name",
@@ -2216,9 +2320,9 @@ end
         },
         sizes =
         {
-            mainBackground = {880, 600},
-            subtabBackground = {200, 600},
-            elementsBackground = {680, 600},
+            mainBackground = {880, 640},
+            subtabBackground = {200, 640},
+            elementsBackground = {680, 640},
             logo = {40, 48}
         },
         pos =
@@ -2748,7 +2852,7 @@ end
                 ['checkbox'] = 22,
                 ['combobox'] = 50,
                 ['slider'] = 22,
-                ['input'] = 25,
+                ['input'] = 50,
                 ['listsearch'] = 54,
                 ['listitem'] = 27,
             },
@@ -2777,189 +2881,118 @@ end
             NextAPI.Images.ImportImageFromUrl('aspect_logo', my.brand.aspectLogoUrl)
         end
     end
-    local function getDiscordField(info, fieldName, fallbackName)
-        local function readField(name)
-            if not name then return nil end
-            local okField, field = pcall(function()
-                return info[name]
-            end)
-            if not okField then return nil end
-            if type(field) == 'function' then
-                local okValue, value = pcall(field)
-                if not okValue then
-                    okValue, value = pcall(field, info)
-                end
-                if okValue then return value end
-            elseif field ~= nil then
-                return field
-            end
-            return nil
+    my.brand.avatarConfig = {
+        resolverUrl = 'https://cdn.sharksoftwares.com.br/fetchUserAvatar?id=',
+        timeoutMs = 10000,
+        pollMs = 100,
+        imageName = 'discordAvatar',
+        maxIdLength = 24,
+        hashLength = 32,
+    }
+    function my.brand.refreshDiscordInfo()
+        local profile, config = my.brand.discord, my.brand.avatarConfig
+        local previousId = profile.id
+        profile.avatarSerial = (profile.avatarSerial or 0) + 1
+        local serial = profile.avatarSerial
+        profile.avatarLoading = false
+        profile.id = nil
+        local okRole, role = pcall(next.cargos.get_role)
+        profile.role = okRole and type(role) == 'string' and role ~= '' and role or 'Cliente'
+        local okName, fallback = pcall(NextAPI.GetPcUsername)
+        profile.name = okName and type(fallback) == 'string' and fallback ~= '' and fallback or 'Usuario'
+        local function validId(id)
+            return type(id) == 'string' and id:match('^%d+$') ~= nil
+                and #id <= config.maxIdLength
         end
-        local value = readField(fieldName)
-        if value == nil or tostring(value) == '' then
-            value = readField(fallbackName)
-        end
-        return value
-    end
-    local function decodeDiscordHttpResponse(response)
-        if type(response) == 'table' then
-            local body = response.body or response.data or response.response or response.content
-            if type(body) == 'table' then
-                return body
-            end
-            if type(body) == 'string' and body ~= '' then
-                local okDecode, decoded = pcall(json.decode, body)
-                if okDecode and type(decoded) == 'table' then
-                    return decoded
-                end
-            end
-            return response
-        end
-
-        if type(response) == 'string' and response ~= '' then
-            local okDecode, decoded = pcall(json.decode, response)
-            if okDecode and type(decoded) == 'table' then
-                return decoded
+        for _, method in ipairs({'GetDiscordInfo', 'GetDiscordPTBInfo', 'GetDiscordCanaryInfo'}) do
+            local ok, name, id = pcall(NextAPI[method])
+            if ok and validId(id) then
+                profile.id = id
+                if type(name) == 'string' and name ~= '' then profile.name = name end
+                break
             end
         end
-
-        return nil
-    end
-
-    local function importDiscordAvatar(discordAPI, avatarUrl)
-        if not avatarUrl or tostring(avatarUrl) == '' then
+        if previousId ~= profile.id then
+            profile.avatarLoaded, profile.avatarUrl = false, ''
+        end
+        local function current()
+            return profile.avatarSerial == serial and not my.mainVars.breakTh
+        end
+        local function validUrl(url)
+            if type(url) ~= 'string' then return false end
+            local id = url:match('^https://cdn%.discordapp%.com/avatars/(%d+)/')
+            return validId(id) and (not profile.id or id == profile.id)
+        end
+        local function importAvatar(url)
+            if not current() or not validUrl(url) then return false end
+            if profile.avatarLoaded and profile.avatarUrl == url then return true end
+            local ok, image = pcall(NextAPI.Images.ImportImageFromUrl, config.imageName, url)
+            if ok and type(image) == 'string' and image ~= '' then
+                profile.avatarUrl, profile.avatarLoaded = url, true
+                return true
+            end
             return false
         end
+        local okUrl, localUrl = pcall(NextAPI.GetAvatarUrl)
+        if okUrl and importAvatar(localUrl) then return end
+        if not profile.id then return end
 
-        avatarUrl = tostring(avatarUrl)
-
-        local imageAPI = discordAPI and discordAPI.Images
-        if imageAPI and imageAPI.ImportImageFromUrl then
-            local okImport = pcall(imageAPI.ImportImageFromUrl, 'discordAvatar', avatarUrl)
-            if okImport then
-                my.brand.discord.avatarUrl = avatarUrl
-                my.brand.discord.avatarLoaded = true
-                return true
-            end
+        local function hashUrl(value)
+            if type(value) ~= 'string' then return nil end
+            if validUrl(value) then return value end
+            local hash = value:gsub('^a_', '')
+            if #hash ~= config.hashLength or not hash:match('^%x+$') then return nil end
+            -- PNG keeps the reference menu's static-avatar behavior.
+            return 'https://cdn.discordapp.com/avatars/' .. profile.id .. '/' .. value .. '.png?size=128'
         end
-
-        if NextAPI and NextAPI.Images and NextAPI.Images.ImportImageFromUrl then
-            local okImport = pcall(NextAPI.Images.ImportImageFromUrl, 'discordAvatar', avatarUrl)
-            if okImport then
-                my.brand.discord.avatarUrl = avatarUrl
-                my.brand.discord.avatarLoaded = true
-                return true
-            end
-        end
-
-        return false
-    end
-
-    -- O alias Canary fornece apenas username e ID. A foto requer avatar URL/hash
-    -- de uma resposta complementar; caso nao exista, mantemos o icone padrao.
-    function my.brand.refreshDiscordInfo()
-        local discordAPI = NextAPI
-        local profile = my.brand.discord
-        profile.avatarLoaded = false
-        profile.avatarUrl = ''
-        profile.id = nil
-        profile.info = nil
-
-        local okRole, role = pcall(function() return next.cargos.get_role() end)
-        profile.role = (okRole and role and tostring(role) ~= '') and tostring(role) or 'Cliente'
-
-        local okFallback, fallback = pcall(function() return NextAPI.GetUsername() end)
-        local fallbackName = (okFallback and fallback and tostring(fallback) ~= '')
-            and tostring(fallback) or (my.userVars and my.userVars.username) or 'Usuario'
-        profile.name = fallbackName
-
-        if not discordAPI then return end
-
-        local selectedName, selectedId, selectedAvatar = nil, nil, nil
-        local function validName(v)
-            if type(v) ~= 'string' then return false end
-            return v ~= '' and v ~= 'User' and v ~= 'Discord Name'
-                and v ~= 'Usuario' and not v:match('^%d+$')
-                and not v:match('^https?://')
-        end
-        local function idFrom(v)
-            if (type(v) == 'string' or type(v) == 'number') and tostring(v):match('^%d+$') then
-                return tostring(v)
+        local function responseUrl(value, depth)
+            if depth > 3 then return nil end
+            if type(value) == 'string' then return hashUrl(value) end
+            if type(value) ~= 'table' or value.success == false then return nil end
+            local responseId = value.id or value.discordId or value.userId
+            if responseId ~= nil and tostring(responseId) ~= profile.id then return nil end
+            for _, key in ipairs({'message', 'avatar', 'avatarHash', 'hash', 'avatarUrl', 'data', 'body'}) do
+                local url = responseUrl(value[key], depth + 1)
+                if url then return url end
             end
             return nil
         end
-        local function acceptResult(methodName)
-            local fn = discordAPI[methodName]
-            if type(fn) ~= 'function' then return end
-            local ok, first, second, third = pcall(fn)
-            if not ok then ok, first, second, third = pcall(fn, discordAPI) end
-            if not ok then return end
-
-            local info = type(first) == 'table' and first
-                or (type(second) == 'table' and second)
-                or (type(third) == 'table' and third) or nil
-            if info then profile.info = info end
-            local username = info and (
-                getDiscordField(info, 'UserName', 'userName')
-                or getDiscordField(info, 'Username', 'username')
-                or getDiscordField(info, 'DiscordName', 'discordName')) or nil
-            if not validName(username) and validName(first) then username = first end
-            if validName(username) and not selectedName then selectedName = username end
-
-            local id = info and (
-                getDiscordField(info, 'DiscordId', 'discordId')
-                or getDiscordField(info, 'DiscordID', 'discordID')
-                or getDiscordField(info, 'UserId', 'userId')
-                or getDiscordField(info, 'UserID', 'userID')
-                or getDiscordField(info, 'Id', 'id')) or nil
-            selectedId = selectedId or idFrom(id) or idFrom(second) or idFrom(third) or idFrom(first)
-
-            local avatar = info and (
-                getDiscordField(info, 'UserAvatar', 'userAvatar')
-                or getDiscordField(info, 'AvatarUrl', 'avatarUrl')
-                or getDiscordField(info, 'Avatar', 'avatar')) or nil
-            if not avatar and type(second) == 'string' and second:match('^https?://') then
-                avatar = second
+        profile.avatarLoading = true
+        nt.createTh(function()
+            local function finish()
+                if profile.avatarSerial == serial then profile.avatarLoading = false end
             end
-            if type(avatar) == 'string' and avatar:match('^https?://') then
-                selectedAvatar = selectedAvatar or avatar
+            if not current() then finish(); return end
+            local okRequest, request = pcall(NextAPI.AsyncRequestHTTP,
+                config.resolverUrl .. profile.id, {method = 'GET'})
+            if not okRequest or type(request) ~= 'table'
+                or type(request.Success) ~= 'function' or type(request.GetResponse) ~= 'function' then
+                finish()
+                return
             end
-        end
-
-        -- Discord normal primeiro; Canary e fallback quando nome/ID nao estiverem disponiveis.
-        acceptResult('GetDiscordInfo')
-        if not selectedName or not selectedId then
-            acceptResult('GetDiscordCanaryInfo')
-        end
-        if selectedName then profile.name = tostring(selectedName) end
-        if selectedId then profile.id = selectedId end
-
-        if selectedAvatar and importDiscordAvatar(discordAPI, selectedAvatar) then
-            return
-        end
-
-        -- Preserva o resolvedor de avatar ja existente; nome e ID sozinhos nao
-        -- informam o avatar personalizado do Discord.
-        if selectedId and type(discordAPI.RequestHTTP) == 'function' then
-            local avatarApiUrl = 'https://cdn.sharksoftwares.com.br/fetchUserAvatar?id=' .. selectedId
-            local requestOk, response = pcall(discordAPI.RequestHTTP, avatarApiUrl, { method = 'GET' })
-            if not requestOk then
-                requestOk, response = pcall(discordAPI.RequestHTTP, discordAPI, avatarApiUrl,
-                    { method = 'GET' })
-            end
-            if requestOk and response then
-                local msg = decodeDiscordHttpResponse(response)
-                if type(msg) == 'table' then
-                    local avatarHash = msg.message or msg.avatar or msg.avatarHash or msg.hash
-                    if type(avatarHash) == 'string' and avatarHash:match('^[%w_]+$') then
-                        local url = 'https://cdn.discordapp.com/avatars/'
-                            .. selectedId .. '/' .. avatarHash .. '.png?size=128'
-                        importDiscordAvatar(discordAPI, url)
+            local deadline = GetGameTimer() + config.timeoutMs
+            while current() do
+                local okReady, ready = pcall(request.Success)
+                if not okReady then finish(); return end
+                if ready then
+                    local okBody, body = pcall(request.GetResponse)
+                    if okBody and type(body) == 'string' and body ~= '' then
+                        local okDecode, decoded = pcall(json.decode, body)
+                        if okDecode then
+                            local url = responseUrl(decoded, 0)
+                            if url then importAvatar(url) end
+                        end
                     end
+                    finish()
+                    return
                 end
+                if GetGameTimer() >= deadline then finish(); return end
+                Wait(config.pollMs)
             end
-        end
+            finish()
+        end)
     end
+
     my.fontAwesome = {
         font = NextAPI.Fonts.CreateFontAwesome(),
         icons = {
@@ -2986,10 +3019,12 @@ end
             desktop    = "\xEF\x84\x88",
             shield     = "\xEF\x84\xB2",
             fire       = "\xEF\x81\xAD",
+            bomb       = "\xEF\x87\xA2",
         }
     }
     function my.fontAwesome.forEntry(text, parentId)
         local value = string.lower(tostring(text or ''))
+        if string.find(value, 'destrui') or parentId == 'destruction' then return my.fontAwesome.icons.bomb end
         if string.find(value, 'lista de player') or string.find(value, 'online') then return my.fontAwesome.icons.users end
         if string.find(value, 'lista de ve') then return my.fontAwesome.icons.list end
         if string.find(value, 've') and (string.find(value, 'culo') or string.find(value, 'iculo')) then return my.fontAwesome.icons.car end
@@ -3077,7 +3112,7 @@ end
         return my.cache.leftPressed or false
     end
     IsKeyJustPressed = function (vkCode)
-        return NextAPI.IsKeyJustPressed(vkCode) or false
+        return menuInput.justPressed(vkCode) or false
     end
     IsKeyPressed = function (vkCode)
         return NextAPI.IsKeyPressed(vkCode) or false
@@ -3099,18 +3134,6 @@ end
         anticheat = (next.server_info and next.server_info.ac) or "Não Detectado"
         city = (next.server_info and next.server_info.city) or "Não Achado"
         players = next.server_info and next.server_info.players or nil
-        local detectedCityName = tostring(city)
-        local okServerInfo, serverInfo = pcall(function()
-            return NextAPI.GetServerInfo()
-        end)
-        if okServerInfo and serverInfo then
-            local okName, serverName = pcall(function()
-                return serverInfo.Name()
-            end)
-            if okName and serverName and tostring(serverName) ~= "" then
-                detectedCityName = tostring(serverName)
-            end
-        end
         local groupCodes = {
             ["Starships"] = "STARSHIPS",
             ["Starships Group"] = "STARSHIPS",
@@ -3125,16 +3148,12 @@ end
         my.general.group = groupCodes[group] or ((city == "Filadelfia Rp") and "FILADELFIA" or tostring(group))
         my.general.name = tostring(city)
         my.general.anticheatName = (anticheat == "Fiveguard") and "FiveGuard" or tostring(anticheat)
-        local username = tostring(NextAPI.GetUsername() or "Usuário")
-        my.interact.Notify("Olá, " .. username .. "! Autenticado com sucesso.", "Next Menu", my.fontAwesome.icons.user, 4500)
-        my.interact.Notify("Anti-cheat: " .. tostring(anticheat), "Detecção", my.fontAwesome.icons.cog, 5000)
-        my.interact.Notify("Cidade: " .. detectedCityName .. " | Grupo: " .. tostring(group), "Servidor", my.fontAwesome.icons.home, 5500)
     end)
     local mysticEssential = {}
     function mysticEssential.defineResourceMain()
             local finded = false
             local table = NextAPI.GetLoadedResources()
-            if not table then
+            if type(table) ~= 'table' then
                 table =
                 {
                 }
@@ -3177,12 +3196,14 @@ end
     end
     my.ui = {}
 
+    local _DrawBorderRect = NextAPI.Drawing.DrawBorderRect
     local _DrawRect = NextAPI.Drawing.DrawRect
     local _DrawShadowRect = NextAPI.Drawing.DrawShadowRect
     local _DrawShadowCircle = NextAPI.Drawing.DrawShadowCircle
-    local _DrawShadowLine = NextAPI.Drawing.DrawShadowLine
+    local _DrawLine = NextAPI.Drawing.DrawLine
     local _DrawImage = NextAPI.Drawing.DrawImage
     local _DrawText = NextAPI.Drawing.DrawText
+    local _InputText = NextAPI.Drawing.InputText
     local _GetTextWidth = NextAPI.Fonts.GetTextWidthSize
     local _floor = math.floor
     local _max = math.max
@@ -3190,6 +3211,10 @@ end
     local _abs = math.abs
     local _tonumber = tonumber
     local _tostring = tostring
+    -- Keep layout and hit testing in logical coordinates.
+    local menuScaleActive, menuScale = false, 1.0
+    local function scaleX(x) return my.screen.w / 2 + (x - my.screen.w / 2) * menuScale end
+    local function scaleY(y) return my.screen.h / 2 + (y - my.screen.h / 2) * menuScale end
     local function aspectDrawOrder(order)
         local offset = 0
         if my.interact and my.interact.activeDrawOrderOffset then
@@ -3234,14 +3259,18 @@ end
                 if cropped then nr = 0.0 end
             end
         end
-        _DrawRect(
-            _tostring(id or ''),
-            math.floor(nx), math.floor(ny),
-            math.floor(nw), math.floor(nh),
-            r, g, b, a,
-            nr + 0.0, drawOrder,
-            not isOutline, isOutline
-        )
+        if menuScaleActive then
+            nx, ny = scaleX(nx), scaleY(ny)
+            nw, nh, nr = nw * menuScale, nh * menuScale, nr * menuScale
+        end
+        if isOutline then
+            _DrawBorderRect(_tostring(id or ''), math.floor(nx), math.floor(ny),
+                math.floor(nw), math.floor(nh), r, g, b, a, nr, drawOrder,
+                menuScaleActive and menuScale or 1.0)
+        else
+            _DrawRect(_tostring(id or ''), math.floor(nx), math.floor(ny),
+                math.floor(nw), math.floor(nh), r, g, b, a, nr, drawOrder)
+        end
     end
     local function safeNumber(v, fallback)
         local n = tonumber(v)
@@ -3250,6 +3279,10 @@ end
     end
     function my.ui.drawShadowRect(x, y, w, h, color, shadow, rounding, order, id)
         local r, g, b, a = aspectContentColor(color)
+        if menuScaleActive then
+            x, y, w, h = scaleX(safeNumber(x)), scaleY(safeNumber(y)), safeNumber(w) * menuScale, safeNumber(h) * menuScale
+            shadow, rounding = safeNumber(shadow, 25.0) * menuScale, safeNumber(rounding, 4.0) * menuScale
+        end
         _DrawShadowRect(
             _tostring(id or ''),
             _floor(safeNumber(x)), _floor(safeNumber(y)),
@@ -3263,33 +3296,45 @@ end
     function my.ui.drawShadowCircle(x, y, radius, thickness, color, shadow, order, id)
         if not _DrawShadowCircle then return end
         local r, g, b, a = aspectContentColor(color)
+        if menuScaleActive then
+            x, y = scaleX(safeNumber(x)), scaleY(safeNumber(y))
+            radius, thickness, shadow = safeNumber(radius, 5.0) * menuScale, safeNumber(thickness, 5.0) * menuScale, safeNumber(shadow, 60.0) * menuScale
+        end
         _DrawShadowCircle(
             _tostring(id or ''),
             _floor(safeNumber(x)), _floor(safeNumber(y)),
             safeNumber(radius, 5.0),
-            safeNumber(thickness, 5.0),
+            48, -- segments; shadow thickness is the penultimate argument
             r, g, b, a,
             safeNumber(shadow, 60.0),
             aspectDrawOrder(order)
         )
     end
     function my.ui.drawShadowLine(x1, y1, x2, y2, thickness, color, shadow, order, id)
-        if not _DrawShadowLine then return end
         local r, g, b, a = aspectContentColor(color)
-        _DrawShadowLine(
-            _tostring(id or ''),
-            _floor(safeNumber(x1)), _floor(safeNumber(y1)),
-            _floor(safeNumber(x2)), _floor(safeNumber(y2)),
-            safeNumber(thickness, 3.0),
-            r, g, b, a,
-            safeNumber(shadow, 60.0),
-            aspectDrawOrder(order)
-        )
+        thickness, shadow = safeNumber(thickness, 3.0), safeNumber(shadow, 60.0)
+        if menuScaleActive then
+            x1, y1, x2, y2 = scaleX(safeNumber(x1)), scaleY(safeNumber(y1)), scaleX(safeNumber(x2)), scaleY(safeNumber(y2))
+            thickness, shadow = thickness * menuScale, shadow * menuScale
+        end
+        -- Approximate the glow with documented line commands, widest first.
+        local drawId, drawOrder = _tostring(id or ''), aspectDrawOrder(order)
+        for layer = 3, 1, -1 do
+            _DrawLine(drawId .. ':glow:' .. layer, safeNumber(x1), safeNumber(y1),
+                safeNumber(x2), safeNumber(y2), r, g, b, math.floor(a / 12),
+                thickness + shadow * layer / 3, drawOrder)
+        end
+        _DrawLine(drawId, safeNumber(x1), safeNumber(y1), safeNumber(x2), safeNumber(y2),
+            r, g, b, a, thickness, drawOrder)
     end
     function my.ui.drawImage(image, x, y, w, h, color, order, id, rounding)
         local r, g, b, a = aspectContentColor(color)
         local nx, ny = safeNumber(x), safeNumber(y)
         local nw, nh = math.max(0, safeNumber(w)), math.max(0, safeNumber(h))
+        if menuScaleActive then
+            nx, ny = scaleX(nx), scaleY(ny)
+            nw, nh, rounding = nw * menuScale, nh * menuScale, safeNumber(rounding) * menuScale
+        end
         _DrawImage(
             _tostring(id or ''), _tostring(image or ''),
             _floor(nx), _floor(ny),
@@ -3306,6 +3351,9 @@ end
             or x < clip.x or x >= clip.x + clip.w) then
             x, y, a = -10000, -10000, 0
         end
+        if menuScaleActive then
+            x, y, size = scaleX(safeNumber(x)), scaleY(safeNumber(y)), safeNumber(size) * menuScale
+        end
         _DrawText(
             _tostring(id or ''), _tostring(icon or ''),
             _floor(safeNumber(x)), _floor(safeNumber(y)),
@@ -3315,11 +3363,96 @@ end
             aspectDrawOrder(order)
         )
     end
+    function my.ui.drawCheckboxMark(boxX, boxY, boxSize, color, order, id)
+        local r, g, b, a = aspectContentColor(color)
+        local scale = menuScaleActive and menuScale or 1.0
+        local left = _floor(menuScaleActive and scaleX(boxX) or boxX)
+        local top = _floor(menuScaleActive and scaleY(boxY) or boxY)
+        -- Match the exact pixel bounds used by drawRect after DPI scaling.
+        local boxPixels = _floor(boxSize * scale)
+        local fontSize = 12.0 * scale
+        local centerX = left + boxPixels / 2
+        local textY = _floor(top + (boxPixels - fontSize) / 2 - scale)
+        _DrawText(_tostring(id or ''), _tostring(my.fontAwesome.icons.check or ''),
+            centerX, textY, fontSize, true, r, g, b, a,
+            my.fontAwesome.font or 'default', aspectDrawOrder(order))
+    end
     my.mouse = {frameX = 0, frameY = 0, frameReady = false}
+    -- InputText is a custom runtime extension; the menu owns cached values and focus.
+    my.ui.textInputs = {}
+    function my.ui.hideTextInput(state)
+        local apiId = state.apiInputId
+        if apiId and state.apiInputReady then
+            local external = state.apiInputStorage and state.apiInputStorage[state.apiInputStorageKey]
+            if external ~= nil and tostring(external) ~= state.apiInputValue then
+                state.text = tostring(external)
+            end
+            if state.apiInputStorage then
+                state.apiInputStorage[state.apiInputStorageKey] = state.text
+            end
+            NextAPI.Drawing.RemoveDraw(apiId)
+            my.ui.textInputs[apiId] = nil
+        end
+        state.apiInputReady, state.active = false, false
+    end
+    function my.ui.beginTextInputs()
+        for _, state in pairs(my.ui.textInputs) do state.apiInputSeen = false end
+    end
+    function my.ui.endTextInputs()
+        for _, state in pairs(my.ui.textInputs) do
+            if not my.mainVars.draw or not state.apiInputSeen then my.ui.hideTextInput(state) end
+        end
+    end
+    function my.ui.inputText(id, state, x, y, w, h, hint, size, maxLength, storage, storageKey)
+        state.apiInputId = 'menu:input:' .. tostring(id)
+        state.apiInputStorage, state.apiInputStorageKey = storage, storageKey
+        local clip = my.interact and my.interact.activeClipRect
+        local hidden = my.interact and my.interact.currentItemHiddenByScroll
+        local fading = my.interact and my.interact.activeContentAlpha
+            and my.interact.activeContentAlpha < 0.90
+        if hidden or fading or my.frame.blockClicks or
+            (clip and (x < clip.x or y < clip.y or x + w > clip.x + clip.w or y + h > clip.y + clip.h)) then
+            my.ui.hideTextInput(state)
+            return state.text or '', false, false, false
+        end
+        if isLeftButtonJustPressed() then
+            state.active = my.mouse.isHovered(x, y, w, h)
+        end
+        local previous = tostring(state.text or '')
+        state.apiInputReady = true
+        if menuScaleActive then
+            x, y, w, h, size = scaleX(x), scaleY(y), w * menuScale, h * menuScale, size * menuScale
+        end
+        -- Keep the existing extension signature; it is absent from the supplied guide.
+        local ok, value, changed, submitted, focused = pcall(_InputText, state.apiInputId,
+            _floor(x), _floor(y), _floor(w), _floor(h), hint or '', maxLength or 1024,
+            'barlowSemiBold', size, true)
+        if not ok or type(value) ~= 'string' then
+            if not state.apiInputError then
+                print('[Next Menu] InputText: contrato da extensao nao confirmado: ' .. tostring(value))
+                state.apiInputError = true
+            end
+            value, changed, submitted, focused = previous, false, false, false
+        else
+            state.apiInputError = false
+            if type(changed) ~= 'boolean' then changed = value ~= previous end
+            submitted = submitted == true
+            if type(focused) ~= 'boolean' then focused = state.active == true end
+        end
+        state.text, state.active = value, focused
+        state.apiInputValue, state.apiInputSeen = value, true
+        my.ui.textInputs[state.apiInputId] = state
+        if storage then storage[storageKey] = value end
+        return value, changed, submitted, focused
+    end
     function my.mouse.beginFrame()
-        local mousex, mousey = GetNuiCursorPosition()
-        my.mouse.frameX = mousex or my.mouse.frameX or 0
-        my.mouse.frameY = mousey or my.mouse.frameY or 0
+        local mousex, mousey = NextAPI.GetCursorX(), NextAPI.GetCursorY()
+        mousex, mousey = mousex or 0, mousey or 0
+        if menuScaleActive then
+            mousex = my.screen.w / 2 + (mousex - my.screen.w / 2) / menuScale
+            mousey = my.screen.h / 2 + (mousey - my.screen.h / 2) / menuScale
+        end
+        my.mouse.frameX, my.mouse.frameY = mousex, mousey
         my.mouse.frameReady = true
         return my.mouse.frameX, my.mouse.frameY
     end
@@ -3406,6 +3539,9 @@ end
                 end
             end
         end
+        if menuScaleActive then
+            x, y, scale = scaleX(x), scaleY(y), scale * menuScale
+        end
         _DrawText(id, text, _floor(x), _floor(y), scale+0.0, center, r, g, b, a, font, aspectDrawOrder(order))
     end
     local snowParticles = {}
@@ -3435,7 +3571,7 @@ end
                 particle.horizontalSpeed = math.random(0, 3) > 1 and math.random(1, 5) / 10000 or 0
             end
             local x, y = mathFuncs.floatToPixel(particle.x, particle.y)
-            NextAPI.Drawing.DrawCircle('##snowFlake_'..tostring(_), x, y, particle.size, 20.0, 2.0, 255, 255, 255, 255, true);
+            NextAPI.Drawing.DrawCircle('##snowFlake_'..tostring(_), x, y, particle.size, 20.0, 2.0, 255, 255, 255, 255, true, 0);
         end
     end
     my.display = {}
@@ -3450,21 +3586,21 @@ end
         my.pos.mainBackground.x, my.pos.mainBackground.y = x, y
         my.pos.subtabBackground.x, my.pos.subtabBackground.y = x, y
         my.pos.elementsBackground.x, my.pos.elementsBackground.y = x + sideW, y
-        -- Single black/graphite surface, with a translucent sidebar (original feel).
+        -- Neutral surfaces keep the red accent focused on selection and controls.
         my.ui.drawRect(x - 2, y - 2, w + 4, h + 4,
-            {205, 33, 53, 100}, 15, false, 0, '##nextFrameGlow')
+            {43, 45, 54, 220}, 11, false, 0, '##nextFrameGlow')
         my.ui.drawRect(x, y, w, h,
-            {12, 13, 18, 247}, 13, false, 1, '##nextShell')
+            {16, 17, 22, 250}, 10, false, 1, '##nextShell')
         my.ui.drawRect(x, y, sideW, h,
-            {13, 14, 19, 246}, 13, false, 2, '##nextSidebarGraphite')
+            {14, 15, 20, 250}, 10, false, 2, '##nextSidebarGraphite')
         my.ui.drawRect(x + sideW, y, contentW, h,
-            {14, 15, 20, 250}, 13, false, 2, '##nextContentGraphite')
+            {18, 19, 25, 250}, 10, false, 2, '##nextContentGraphite')
         my.ui.drawRect(x + sideW - 1, y + 1, 1, h - 2,
-            {75, 48, 60, 175}, 0, false, 3, '##nextSidebarSep')
+            {51, 53, 62, 180}, 0, false, 3, '##nextSidebarSep')
         my.ui.drawRect(x + sideW, y + 50, contentW - 2, 1,
-            {64, 65, 78, 125}, 0, false, 3, '##nextHeaderSep')
+            {51, 53, 62, 155}, 0, false, 3, '##nextHeaderSep')
         my.ui.drawRect(x + 1, y + 1, w - 2, h - 2,
-            {72, 74, 88, 170}, 12, true, 4, '##nextOuterBorder')
+            {54, 56, 65, 160}, 9, true, 4, '##nextOuterBorder')
         -- Limpa o draw ID usado nas versoes antigas para nao sobrar linha sobre a logo.
         my.ui.drawRect(-10000, -10000, 1, 1,
             {0, 0, 0, 0}, 0, false, 5, '##nextTopAccent')
@@ -3503,10 +3639,10 @@ end
         local h = my.sizes.subtabBackground[2]
         local x, y = sx + 12, sy + h - 68
         local w, cardH = my.sizes.subtabBackground[1] - 24, 55
-        my.ui.drawRect(x, y, w, cardH, {23, 24, 31, 180},
-            11, false, 7, '##nextProfileBackground')
-        my.ui.drawRect(x, y, w, cardH, {87, 62, 73, 90},
-            11, true, 8, '##nextProfileBorder')
+        my.ui.drawRect(x, y, w, cardH, {24, 25, 32, 220},
+            7, false, 7, '##nextProfileBackground')
+        my.ui.drawRect(x, y, w, cardH, {65, 67, 77, 100},
+            7, true, 8, '##nextProfileBorder')
         local avatarX, avatarY = x + 8, y + 7
         my.ui.drawRect(avatarX, avatarY, 40, 40,
             {209, 20, 44, 255}, 20, false, 9, '##nextProfileAvatarBg')
@@ -3555,6 +3691,24 @@ end
         serial = 0,
     }
     my.interact.listNotify = {}
+    local notifySoundUrl = 'https://gabriel3444.github.io/zentrix-public/audioFiles/notification.mp3'
+    local notifySoundErrorLogged = false
+    function my.interact.playNotifySound()
+        if not NextAPI or type(NextAPI.PlaySoundFromUrl) ~= 'function' then
+            if not notifySoundErrorLogged then
+                notifySoundErrorLogged = true
+            end
+            return
+        end
+        local ok, result = pcall(NextAPI.PlaySoundFromUrl, notifySoundUrl)
+        if (not ok or result ~= true) and not notifySoundErrorLogged then
+            local reason = ok and 'a reprodução não foi iniciada' or tostring(result)
+            print('[Next Menu] Não foi possível reproduzir o som de notificação: ' .. reason)
+            notifySoundErrorLogged = true
+        elseif ok and result == true then
+            notifySoundErrorLogged = false
+        end
+    end
     local function notifyEaseOutExpo(value)
         if value >= 1.0 then return 1.0 end
         if value <= 0.0 then return 0.0 end
@@ -3583,21 +3737,33 @@ end
         end
         return value
     end
-    my.interact.Notify = function(description, name, icon, duration)
+    local function fitNotifyText(value, maxWidth, size)
+        local text = tostring(value or ''):gsub('[\r\n]+', ' ')
+        if my.texts.getTextWidth(text, size) <= maxWidth then return text end
+        local suffix = '...'
+        while #text > 0 and my.texts.getTextWidth(text .. suffix, size) > maxWidth do
+            local last = utf8 and utf8.offset and utf8.offset(text, -1)
+            text = text:sub(1, (last or #text) - 1)
+        end
+        return text .. suffix
+    end
+    my.interact.Notify = function(description, name, icon, duration, kind)
         local screenW = select(1, GetActiveScreenResolution())
-        duration = tonumber(duration) or 5000
+        duration = math.max(500, tonumber(duration) or 5000)
         my.interact.notifyVars.serial = my.interact.notifyVars.serial + 1
         table.insert(my.interact.listNotify, {
             id = my.interact.notifyVars.serial,
             name = tostring(name or 'next'),
             description = tostring(description or ''),
             icon = resolveNotifyIcon(icon),
+            kind = kind,
             time = GetGameTimer(),
             tempo = duration,
-            x = screenW + 500,
+            x = screenW + 24,
             opacity = 0,
-            yPosition = 0,
+            yPosition = 20 + 68 * #my.interact.listNotify,
         })
+        my.interact.playNotifySound()
         if my.interact.notifyVars.running then
             return
         end
@@ -3609,47 +3775,64 @@ end
                 for index = #my.interact.listNotify, 1, -1 do
                     local notify = my.interact.listNotify[index]
                     local elapsed = now - notify.time
-                    local descriptionWidth = my.texts.getTextWidth(notify.description, 14)
-                    local nameWidth = my.texts.getTextWidth(notify.name, 15.5)
-                    local width = math.max(descriptionWidth, nameWidth)
-                    local targetX = currentW - (60 + width + 50)
+                    local cardW = math.min(360, math.max(200, currentW - 32))
+                    local cardH = 58
+                    local targetX = currentW - cardW - 16
                     local remove = false
                     if elapsed < 500 then
                         local progress = elapsed / 500
-                        notify.x = (currentW + 500) + (targetX - (currentW + 500)) * notifyEaseOutExpo(progress)
-                        notify.opacity = math.min(255, notify.opacity + 8)
+                        notify.x = (currentW + 24) + (targetX - (currentW + 24)) * notifyEaseOutExpo(progress)
+                        notify.opacity = math.floor(255 * math.min(1, progress * 2))
                     elseif elapsed < notify.tempo then
                         notify.x = targetX
                         notify.opacity = 255
                     elseif elapsed < notify.tempo + 600 then
                         local progress = (elapsed - notify.tempo) / 600
-                        notify.x = targetX + ((currentW + 500) - targetX) * notifyEaseInOutQuad(progress)
-                        notify.opacity = math.max(0, notify.opacity - 8)
+                        notify.x = targetX + ((currentW + 24) - targetX) * notifyEaseInOutQuad(progress)
+                        notify.opacity = math.floor(255 * (1 - progress))
                     else
                         remove = true
                     end
                     if remove then
+                        local drawId = tostring(notify.id)
+                        for _, prefix in ipairs({'##notifyBg_', '##notifyBorder_', '##notifyAccent_', '##notifyIconBg_', '##notifyProgressTrack_', '##notifyProgress_'}) do
+                            my.ui.drawRect(-10000, -10000, 1, 1, {0, 0, 0, 0}, 0, false, 11500, prefix .. drawId)
+                        end
+                        my.texts.drawText('', -10000, -10000, false, 'left', 14, {0, 0, 0, 0}, 11503, '##notifyDescription_' .. drawId)
+                        my.texts.drawText('', -10000, -10000, false, 'left', 15, {0, 0, 0, 0}, 11504, '##notifyName_' .. drawId)
+                        my.ui.drawFontAwesome(notify.icon, -10000, -10000, 1, {0, 0, 0, 0}, false, 11506, '##notifyIcon_' .. drawId)
                         table.remove(my.interact.listNotify, index)
                     else
-                        local targetY = 20 + (50 * (index - 1))
-                        notify.yPosition = notify.yPosition + (targetY - notify.yPosition) * 0.04
-                        if not (notify.x + 200 < 0 or notify.x > currentW or notify.yPosition + 60 < 0 or notify.yPosition > currentH) then
-                            local r, g, b = my.colors.main[1], my.colors.main[2], my.colors.main[3]
-                            local baseX = notify.x + 40
-                            local textX = notify.x + 85
-                            local iconX = notify.x + 56
-                            local iconY = notify.yPosition + 12
+                        local targetY = 20 + (68 * (index - 1))
+                        notify.yPosition = notify.yPosition + (targetY - notify.yPosition) * 0.12
+                        if not (notify.x + cardW < 0 or notify.x > currentW or notify.yPosition + cardH < 0 or notify.yPosition > currentH) then
+                            local colors = {success = {75, 185, 125}, warning = {230, 177, 82}, error = {234, 94, 94}}
+                            local accent = colors[notify.kind] or colors.warning
+                            local r, g, b = accent[1], accent[2], accent[3]
+                            local baseX = notify.x
+                            local textX = baseX + 55
+                            local iconX = baseX + 26
+                            local iconY = notify.yPosition + 20
                             local drawId = tostring(notify.id)
-                            my.ui.drawRect(baseX, notify.yPosition, 47 + width + 8, 42,
-                                {15, 16, 18, notify.opacity}, 10, false, 11500, '##notifyBg_' .. drawId)
-                            my.ui.drawRect(baseX, notify.yPosition + 11, 6, 21,
-                                {r, g, b, notify.opacity}, 10, false, 11501, '##notifyAccent_' .. drawId)
-                            my.texts.drawText(notify.description, textX, notify.yPosition + 22, false, 'left', 14,
-                                {170, 170, 170, notify.opacity}, 11503, '##notifyDescription_' .. drawId)
-                            my.texts.drawText(notify.name, textX, notify.yPosition + 7, false, 'left', 15.5,
-                                {255, 255, 255, notify.opacity}, 11504, '##notifyName_' .. drawId)
-                            my.ui.drawFontAwesome(notify.icon, iconX, iconY, 19,
-                                {r, g, b, notify.opacity}, false, 11506, '##notifyIcon_' .. drawId)
+                            my.ui.drawRect(baseX, notify.yPosition, cardW, cardH,
+                                {20, 21, 28, math.floor(notify.opacity * 0.97)}, 8, false, 11500, '##notifyBg_' .. drawId)
+                            my.ui.drawRect(baseX, notify.yPosition, cardW, cardH,
+                                {71, 73, 84, math.floor(notify.opacity * 0.65)}, 8, true, 11501, '##notifyBorder_' .. drawId)
+                            my.ui.drawRect(baseX + 1, notify.yPosition + 10, 3, cardH - 20,
+                                {r, g, b, notify.opacity}, 1, false, 11502, '##notifyAccent_' .. drawId)
+                            my.ui.drawRect(baseX + 10, notify.yPosition + 13, 32, 32,
+                                {r, g, b, math.floor(notify.opacity * 0.12)}, 7, false, 11502, '##notifyIconBg_' .. drawId)
+                            my.texts.drawText(fitNotifyText(notify.description, cardW - 67, 14), textX, notify.yPosition + 30, false, 'left', 14,
+                                {181, 184, 194, notify.opacity}, 11503, '##notifyDescription_' .. drawId)
+                            my.texts.drawText(fitNotifyText(notify.name, cardW - 67, 15), textX, notify.yPosition + 10, false, 'left', 15,
+                                {239, 240, 244, notify.opacity}, 11504, '##notifyName_' .. drawId)
+                            my.ui.drawFontAwesome(notify.icon, iconX, iconY, 16,
+                                {r, g, b, notify.opacity}, true, 11506, '##notifyIcon_' .. drawId)
+                            local progress = math.max(0, math.min(1, 1 - elapsed / notify.tempo))
+                            my.ui.drawRect(baseX + 10, notify.yPosition + cardH - 4, cardW - 20, 2,
+                                {67, 69, 79, math.floor(notify.opacity * 0.65)}, 1, false, 11503, '##notifyProgressTrack_' .. drawId)
+                            my.ui.drawRect(baseX + 10, notify.yPosition + cardH - 4, (cardW - 20) * progress, 2,
+                                {r, g, b, math.floor(notify.opacity * 0.8)}, 1, false, 11504, '##notifyProgress_' .. drawId)
                         end
                     end
                 end
@@ -3661,12 +3844,15 @@ end
     my.interact.notify = function(text, kind, time)
         local types = {
             success = {name = 'Sucesso', icon = 'f058'},
-            info = {name = 'Info', icon = 'f05a'},
             error = {name = 'Erro', icon = 'f057'},
             warning = {name = 'Aviso', icon = 'f071'},
         }
-        local data = types[tostring(kind or 'info')] or types.info
-        my.interact.Notify(text, data.name, data.icon, time)
+        local aliases = {sucesso = 'success', erro = 'error', aviso = 'warning', info = 'warning', information = 'warning'}
+        local normalized = string.lower(tostring(kind or 'warning'))
+        normalized = aliases[normalized] or normalized
+        if not types[normalized] then normalized = 'warning' end
+        local data = types[normalized]
+        my.interact.Notify(text, data.name, data.icon, time, normalized)
     end
     my.interact.adminVars =
     {
@@ -3758,9 +3944,11 @@ end
         local state = my.interact.tabVars.tabs[entryId]
         local isSelected = my.mainVars.navEntry == entryId
         local x = my.pos.subtabBackground.x + 9
-        local y = my.pos.subtabBackground.y + 75 + my.interact.tabVars.pos.y
+        local y = my.pos.subtabBackground.y + 132 + my.interact.tabVars.pos.y
         local rowW = my.sizes.subtabBackground[1] - 18
         local rowH = 40
+        local iconX = x + 25
+        local labelX = x + 46
         local isHover = my.mouse.isHovered(x, y, rowW, rowH)
         state.selected = my.anim.lerp(state.selected or 0.0, isSelected and 1.0 or 0.0, 0.12)
         state.hover = my.anim.lerp(state.hover or 0.0, (isHover and not isSelected) and 1.0 or 0.0, 0.14)
@@ -3784,49 +3972,23 @@ end
             end
             my.ui.drawRect(
                 selectedBg.x, selectedBg.y, selectedBg.w, selectedBg.h,
-                {20, 19, 24, 75},
-                3, false, 2, '##cleanTabSelectedBg'
+                {38, 39, 47, 190},
+                6, false, 2, '##cleanTabSelectedBg'
             )
         elseif state.hover > 0.01 then
             my.ui.drawRect(
                 x, y, rowW, rowH,
-                {20, 19, 24, math.floor(24 * state.hover)},
-                3, false, 2, '##cleanTabHoverBg_'..tostring(entryId or '')
+                {39, 40, 48, math.floor(110 * state.hover)},
+                6, false, 2, '##cleanTabHoverBg_'..tostring(entryId or '')
             )
         end
         if state.selected > 0.01 then
-            local glowAlpha = math.floor(255 * state.selected)
-            local glowOuterAlpha = math.floor(220 * state.selected)
             local lineAlpha = math.floor(255 * state.selected)
-            local maxLineH = math.max(10, rowH - 8)
+            local maxLineH = math.max(10, rowH - 16)
             local lineH = maxLineH * state.selected
             local lineY = y + ((rowH - lineH) / 2)
-            my.ui.drawShadowCircle(
-                x + 15, y + (rowH * 0.5),
-                4.0, 4.0,
-                {my.colors.main[1], my.colors.main[2], my.colors.main[3], glowAlpha},
-                85.0, 5, '##cleanTabFAIconShadow_'..tostring(entryId or '')
-            )
-            my.ui.drawShadowCircle(
-                x + 15, y + (rowH * 0.5),
-                6.0, 6.0,
-                {my.colors.main[1], my.colors.main[2], my.colors.main[3], glowOuterAlpha},
-                140.0, 5, '##cleanTabIconShadowOuter_'..tostring(entryId or '')
-            )
-            my.ui.drawShadowCircle(
-                x + 15, y + (rowH * 0.5),
-                6.0, 6.0,
-                {my.colors.main[1], my.colors.main[2], my.colors.main[3], glowAlpha},
-                65.0, 6, '##cleanTabIconShadowInner_'..tostring(entryId or '')
-            )
-            my.ui.drawShadowLine(
-                x + 1, lineY, x + 1, lineY + lineH,
-                3,
-                {my.colors.main[1], my.colors.main[2], my.colors.main[3], lineAlpha},
-                180, 5, '##cleanTabLineShadow_'..tostring(entryId or '')
-            )
             my.ui.drawRect(
-                x, lineY, 3, lineH,
+                x + 3, lineY, 3, lineH,
                 {my.colors.main[1], my.colors.main[2], my.colors.main[3], lineAlpha},
                 1, false, 5, '##cleanTabLine_'..tostring(entryId or '')
             )
@@ -3845,15 +4007,15 @@ end
         end
         local faIcon = my.fontAwesome.forEntry(text, parentId)
         my.ui.drawFontAwesome(
-            faIcon, x + 16, y + 13, 16,
+            faIcon, iconX + 1, y + 13, 16,
             {0, 0, 0, 150}, true, 6, '##cleanTabFAShadow_'..tostring(entryId or '')
         )
         my.ui.drawFontAwesome(
-            faIcon, x + 15, y + 12, 16,
+            faIcon, iconX, y + 12, 16,
             iconColor, true, 6, '##cleanTabFA_'..tostring(entryId or '')
         )
         my.texts.drawText(
-            text or '', x + 34, y + 11, false, 'left', 16.0,
+            text or '', labelX, y + 11, false, 'left', 16.0,
             textColor, 6, '##cleanTabText_'..tostring(entryId or '')
         )
         if isHover and isLeftButtonJustPressed() and not my.frame.blockClicks then
@@ -3875,9 +4037,9 @@ end
             my.interact.tabVars.pos.y = my.interact.tabVars.pos.y + 6
         end
         local x = my.pos.subtabBackground.x + 9
-        local y = my.pos.subtabBackground.y + 75 + my.interact.tabVars.pos.y
+        local y = my.pos.subtabBackground.y + 132 + my.interact.tabVars.pos.y
         my.texts.drawText(
-            text or '', x, y + 1, false, 'left', 13.0,
+            text or '', x + 4, y + 1, false, 'left', 13.0,
             {92, 92, 102, 255}, 5, '##cleanTabCategory_'..tostring(text or '')
         )
         my.interact.tabVars.pos.y = my.interact.tabVars.pos.y + 25
@@ -3907,83 +4069,25 @@ end
         }
         my.interact.searchBar = function ()
             local vars = my.interact.searchVars
-            vars.blocktext = vars.blocktext or false
-            local w, h = 180, 34
-            local x = my.pos.elementsBackground.x + my.sizes.elementsBackground[1] - w - 13
-            local y = my.pos.elementsBackground.y + 8
+            local w, h = my.sizes.subtabBackground[1] - 24, 32
+            local x = my.pos.subtabBackground.x + 12
+            local y = my.pos.subtabBackground.y + 106
             local isHover = my.mouse.isHovered(x, y, w, h)
-            local displayText = vars.text
-            if vars.active and (not displayText or displayText == '') then
-                displayText = ''
-            elseif not displayText or displayText == '' then
-                displayText = 'Pesquisar'
+            if not vars.apiLegacyCleared then
+                NextAPI.Drawing.RemoveDraw('##aspectSearchText')
+                vars.apiLegacyCleared = true
             end
-            local shownText = tostring(displayText or '')
-            while #shownText > 0 and my.texts.getTextWidth(shownText, 14.0) > (w - 46) do
-                shownText = string.sub(shownText, 2)
-            end
-            -- Apaga IDs antigos de CTRL/K para renderizadores persistentes.
-            my.ui.drawRect(-10000, -10000, 1, 1, {0,0,0,0}, 0, false, 9, '##nextSearchCtrlCap')
-            my.ui.drawRect(-10000, -10000, 1, 1, {0,0,0,0}, 0, false, 9, '##nextSearchKCap')
-            my.texts.drawText('', -10000, -10000, false, 'left', 10.0, {0,0,0,0}, 9, '##nextSearchCtrlText')
-            my.texts.drawText('', -10000, -10000, false, 'left', 10.0, {0,0,0,0}, 9, '##nextSearchKText')
-            my.ui.drawRect(x, y, w, h, {72, 76, 90, 205}, 10, false, 7, '##aspectSearchOuter')
-            my.ui.drawRect(x + 1, y + 1, w - 2, h - 2, {21, 23, 30, 255}, 9, false, 8, '##aspectSearchInner')
+            my.ui.drawRect(x, y, w, h, {57, 59, 70, 190}, 7, false, 7, '##aspectSearchOuter')
+            my.ui.drawRect(x + 1, y + 1, w - 2, h - 2, {25, 26, 33, 255}, 6, false, 8, '##aspectSearchInner')
             local textColor = (isHover or vars.active) and 170 or 121
             my.ui.drawFontAwesome(my.fontAwesome.icons.search, x + 16, y + 9, 14,
                 {textColor, textColor, textColor, 255}, true, 9, '##aspectSearchIconFA')
-            my.texts.drawText(shownText, x + 32, y + 9, false, 'left', 14.0,
-                {textColor, textColor, textColor, 255}, 9, '##aspectSearchText')
-            -- Barra de pesquisa abre somente com clique, sem atalho Ctrl+K.
-            if isHover and isLeftButtonJustPressed() and not my.frame.blockClicks then
-                vars.active = true
-                vars.blocktext = false
-                vars.text = ''
-                vars.tab = my.mainVars.tab
-                vars.subtab = my.mainVars.curSubtab
-                vars.alphabar = 0
-                vars.change = false
-            end
-            if vars.active then
-                if vars.tab ~= my.mainVars.tab or vars.subtab ~= my.mainVars.curSubtab then
-                    vars.active = false
-                    vars.text = ''
-                    vars.blocktext = false
-                    return
-                end
-                if IsKeyJustPressed(myAPI.Keys['ESC']) then
-                    vars.active = false
-                    vars.text = ''
-                    vars.blocktext = false
-                    return
-                end
-                if IsKeyJustPressed(myAPI.Keys['ENTER']) then
-                    vars.active = false
-                end
-                if not isHover and isLeftButtonJustPressed() then
-                    vars.active = false
-                end
-                if vars.active and not vars.blocktext then
-                    local currentWidth = my.texts.getTextWidth(vars.text or '', 15.5)
-                    if currentWidth < 240 then
-                        for txt, vkcode in pairs(myAPI.keysTextBox) do
-                            if vkcode and IsKeyJustPressed(vkcode) then
-                                local textAdd = txt
-                                if IsKeyPressed(myAPI.Keys['SHIFT']) then
-                                    textAdd = string.upper(txt)
-                                end
-                                vars.text = (vars.text or '') .. tostring(textAdd)
-                            end
-                        end
-                    end
-                    if IsKeyPressed(myAPI.Keys['BACKSPACE']) and ((my.vars.backdelay or 0) < GetGameTimer()) then
-                        my.vars.backdelay = GetGameTimer() + 150
-                        vars.text = string.sub(vars.text or '', 1, -2)
-                        if vars.text == '' then
-                            vars.active = false
-                        end
-                    end
-                end
+            local wasActive = vars.active
+            local value, changed = my.ui.inputText('main-search', vars,
+                x + 24, y, w - 28, h, 'Pesquisar', 14.0, 256)
+            vars.text, vars.change = value, changed
+            if vars.active and not wasActive then
+                vars.tab, vars.subtab = my.mainVars.tab, my.mainVars.curSubtab
             end
         end
         my.interact.subtabVars =
@@ -4010,8 +4114,6 @@ end
         }
         my.interact.subtabs = {}
         function my.interact.subtab(tab, curtitle, id, name, groupboxes, bridge)
-            local isSearching = my.others.isSearching()
-            if isSearching then return end
             local uniqueid = tostring(tab.id or '')..'_'..tostring(id or '')
             if not my.interact.subtabs[uniqueid] then
                 my.interact.subtabs[uniqueid] = {active = 0.0, hover = 0.0}
@@ -4044,7 +4146,7 @@ end
                     yElement + 1,
                     selectedBg.w,
                     hElement - 2,
-                    {38, 37, 43, math.floor(65 * selectedBg.alpha)},
+                    {42, 43, 51, math.floor(170 * selectedBg.alpha)},
                     5,
                     false,
                     3,
@@ -4056,32 +4158,6 @@ end
                 local lineH = maxLineH * state.active
                 local lineY = yElement + ((hElement - lineH) / 2)
                 local lineAlpha = math.floor(255 * state.active)
-                local glowAlpha = math.floor(255 * state.active)
-                local glowOuterAlpha = math.floor(220 * state.active)
-                my.ui.drawShadowCircle(
-                    xElement + 18, yElement + 16,
-                    4.0, 4.0,
-                    {my.colors.main[1], my.colors.main[2], my.colors.main[3], glowAlpha},
-                    85.0, 5, '##cleanSubtabFAIconShadow_'..uniqueid
-                )
-                my.ui.drawShadowCircle(
-                    xElement + 18, yElement + (hElement * 0.5),
-                    6.0, 6.0,
-                    {my.colors.main[1], my.colors.main[2], my.colors.main[3], glowOuterAlpha},
-                    140.0, 5, '##cleanSubtabIconShadowOuter_'..uniqueid
-                )
-                my.ui.drawShadowCircle(
-                    xElement + 18, yElement + (hElement * 0.5),
-                    6.0, 6.0,
-                    {my.colors.main[1], my.colors.main[2], my.colors.main[3], glowAlpha},
-                    65.0, 6, '##cleanSubtabIconShadowInner_'..uniqueid
-                )
-                my.ui.drawShadowLine(
-                    xElement + 1, lineY, xElement + 1, lineY + lineH,
-                    4,
-                    {my.colors.main[1], my.colors.main[2], my.colors.main[3], lineAlpha},
-                    180, 5, '##cleanSubtabLineShadow_'..uniqueid
-                )
                 my.ui.drawRect(
                     xElement,
                     lineY,
@@ -4105,10 +4181,10 @@ end
                 iconColor = {my.colors.main[1], my.colors.main[2], my.colors.main[3], 255}
                 textColor = {238, 238, 242, 255}
             elseif isHover then
-                iconColor = {184, 184, 190, 255}
+                iconColor = {my.colors.main[1], my.colors.main[2], my.colors.main[3], 255}
                 textColor = {200, 200, 206, 255}
             else
-                iconColor = {122, 122, 131, 255}
+                iconColor = {my.colors.main[1], my.colors.main[2], my.colors.main[3], 255}
                 textColor = {140, 140, 149, 255}
             end
             local faIcon = my.fontAwesome.forEntry(name, tab.id)
@@ -4163,7 +4239,7 @@ end
             checkbox     = {top = 12, bottom = 12},
             combobox     = {top = 14, bottom = 34},
             slider       = {top = 12, bottom = 12},
-            input        = {top = 12, bottom = 13},
+            input        = {top = 16, bottom = 29},
             colorpicker  = {top = 11, bottom = 11},
             listsearch   = {top = 16, bottom = 31},
             listitem     = {top = 13, bottom = 13},
@@ -4253,7 +4329,7 @@ end
                     barY,
                     2,
                     barH,
-                    {my.colors.main[1], my.colors.main[2], my.colors.main[3], barAlpha},
+                    {135, 138, 150, barAlpha},
                     1,
                     false,
                     11,
@@ -4295,6 +4371,58 @@ end
     end
     my.interact.groupboxInfos = nextGroupboxInfo
 
+        local descriptions = {
+            ['Principal'] = 'Funções principais do jogador',
+            ['Segundario'] = 'Movimentação e outros recursos',
+            ['Secundario'] = 'Movimentação e outros recursos',
+            ['Proteções'] = 'Opções de proteção e segurança',
+            ['Poderes'] = 'Modos especiais e habilidades',
+            ['Roupas'] = 'Ajuste a aparência do personagem',
+            ['Teleportes'] = 'Locais e opções de teleporte',
+        }
+        local descriptionsById = {
+            ax_skins_jogador = 'Modelos para o personagem',
+            ax_extras_jogador = 'Mais opções de aparência',
+            ax_Roupas_SALVAS = 'Gerencie suas roupas salvas',
+            ax_tpsvalos = 'Gerencie os locais salvos',
+            ax_animaodscas = 'Estilos de caminhada',
+            ax_animaodscas_objetos = 'Animações com objetos',
+            ax_animaodscas_basica = 'Gestos e animações básicas',
+            ax_anima__oes_troll = 'Animações especiais',
+            ax_playersListBox = 'Pesquise e selecione jogadores',
+            ax_configlista = 'Filtros da lista de jogadores',
+            ax_onlineOP = 'Ações para o jogador selecionado',
+            ax_Destrui____oonline = 'Opções para jogadores online',
+            ax_geral = 'Ações para veículos selecionados',
+            ax_spawncarros = 'Escolha e crie um veículo',
+            ['ax_lista:veh'] = 'Pesquise veículos próximos',
+            ax_configlistadeveiculo = 'Filtros da lista de veículos',
+            ax_qdqwdqwdqwd = 'Ações especiais com veículos',
+            ax_extrascarros = 'Mais opções para veículos',
+            ax_radar = 'Cuidados e funções do veículo',
+            ax_cor_carro = 'Personalize as cores do veículo',
+            ax_Tunagem = 'Melhorias e ajustes do veículo',
+            ax_modificacoes = 'Peças e modificações visuais',
+            ax_armas = 'Seleção e opções de armas',
+            ax_Extra = 'Recursos adicionais de armas',
+            ax_troll = 'Opções especiais disponíveis',
+            ax_exploits_veiculos = 'Opções relacionadas a veículos',
+            ax_freecam_main = 'Controle e velocidade da câmera',
+            ax_exploits = 'Opções para o grupo atual',
+            ax_uni = 'Opções disponíveis em geral',
+            ax_farm = 'Ajustes de automação',
+            ax_temas = 'Personalize a cor do menu',
+            ax_iNFORMACOES = 'Informações da conta e do servidor',
+            ax_config = 'Preferências e controles do menu',
+            ax_otimize = 'Ajustes de ambiente e desempenho',
+        }
+        local sectionIcons = {
+            ['Principal'] = my.fontAwesome.icons.user,
+            ['Segundario'] = my.fontAwesome.icons.desktop,
+            ['Secundario'] = my.fontAwesome.icons.desktop,
+            ['Proteções'] = my.fontAwesome.icons.shield,
+            ['Poderes'] = my.fontAwesome.icons.fire,
+        }
         my.interact.groupbox = function(id, text, height, items, manualX, manualY, sectionIcon)
             -- Never draw elements with an absent groupbox or scroll state.
             id = tostring(id or text or 'next_groupbox')
@@ -4359,64 +4487,41 @@ end
             local sectionY = yTitle + 5
             local sectionH = state.h + 15
             local headerH = 42
-            local cardBorder = {91, 95, 108}
+            local cardBorder = {62, 65, 75}
             my.ui.drawRect(
                 sectionX, sectionY, wTitle, sectionH,
-                {13, 15, 21, 248},
-                10, false, 1, '##fenixSection_'..uniqueid
+                {21, 22, 29, 250},
+                7, false, 1, '##fenixSection_'..uniqueid
             )
             my.ui.drawRect(
                 sectionX, sectionY, wTitle, headerH,
-                {25, 26, 34, 247},
-                10, false, 2, '##fenixSectionHeader_'..uniqueid
+                {27, 28, 36, 250},
+                7, false, 2, '##fenixSectionHeader_'..uniqueid
             )
             my.ui.drawRect(
                 sectionX, sectionY + headerH, wTitle, 1,
-                {75, 66, 78, 95},
+                {64, 66, 76, 105},
                 0, false, 2, '##fenixSectionHeaderBottom_'..uniqueid
             )
             my.ui.drawRect(sectionX, sectionY, wTitle, sectionH,
-                {cardBorder[1], cardBorder[2], cardBorder[3], 205},
-                10, true, 3, '##nextCardBorder_'..uniqueid)
+                {cardBorder[1], cardBorder[2], cardBorder[3], 160},
+                7, true, 3, '##nextCardBorder_'..uniqueid)
             my.ui.drawRect(-10000, -10000, 1, 1,
                 {0, 0, 0, 0}, 0, false, 4, '##nextCardTopAccent_'..uniqueid)
             -- Header icons come from one known font instead of per-server glyphs.
             -- It prevents mismatched or missing card symbols in FiveM.
-            local sectionIcons = {
-                ['Principal'] = my.fontAwesome.icons.user,
-                ['Segundario'] = my.fontAwesome.icons.desktop,
-                ['Secundario'] = my.fontAwesome.icons.desktop,
-                ['Proteções'] = my.fontAwesome.icons.shield,
-                ['Poderes'] = my.fontAwesome.icons.fire,
-            }
             local resolvedSectionIcon = sectionIcons[text] or sectionIcon
             if type(resolvedSectionIcon) ~= 'string' or resolvedSectionIcon == '' then
                 resolvedSectionIcon = my.fontAwesome.forEntry(text, nil)
             end
-            my.ui.drawShadowCircle(
-                sectionX + 25, sectionY + 22,
-                8.0, 8.0, {255, 0, 12, 255},
-                140.0, 5, '##nextCardIconShadowOuter_'..uniqueid
-            )
-            my.ui.drawShadowCircle(
-                sectionX + 25, sectionY + 22,
-                5.0, 5.0, {255, 0, 8, 255},
-                85.0, 6, '##nextCardIconShadowInner_'..uniqueid
-            )
             my.ui.drawFontAwesome(resolvedSectionIcon,
                 sectionX + 25, sectionY + 13, 18.0,
-                {255, 35, 50, 255}, true, 6, '##nextCardIcon_'..uniqueid)
-            local descriptions = {
-                ['Principal'] = 'Funcoes principais do jogador',
-                ['Segundario'] = 'Movimentacao e outros recursos',
-                ['Secundario'] = 'Movimentacao e outros recursos',
-                ['Proteções'] = 'Opcoes de protecao e seguranca',
-                ['Poderes'] = 'Modos especiais e habilidades',
-            }
-            my.texts.drawText(text or '', sectionX + 49, sectionY + 8,
+                {my.colors.main[1], my.colors.main[2], my.colors.main[3], 255}, true, 6, '##nextCardIcon_'..uniqueid)
+            local subtitle = descriptions[text] or descriptionsById[id] or 'Opções desta seção'
+            local displayTitle = text == 'Segundario' and 'Secundário' or text
+            my.texts.drawText(displayTitle or '', sectionX + 49, sectionY + 8,
                 false, 'left', 15.0, {237, 239, 244, 255}, 6,
                 '##nextCardTitle_'..uniqueid)
-            local subtitle = descriptions[text]
             if subtitle then
                 my.texts.drawText(subtitle, sectionX + 49, sectionY + 25,
                     false, 'left', 10.8, {145, 151, 168, 255}, 6,
@@ -4434,6 +4539,20 @@ end
                 w = math.max(1, wTitle - (clipPadding * 2)),
                 h = math.max(1, clipBottom - clipTop)
             }
+            -- Clear the old item drawings before changing the filtered list.
+            local searchText = my.interact.searchVars.text or ''
+            if state.searchText ~= nil and state.searchText ~= searchText then
+                local oldX, oldY, oldAdd = my.interact.frame.pos.x, my.interact.frame.pos.y, my.interact.frame.pos.add
+                my.interact.frame.pos.x, my.interact.frame.pos.y, my.interact.frame.pos.add = -10000, -10000, 0
+                for _, oldItem in ipairs(state.searchItems or {}) do
+                    my.rendering.identifyElement(oldItem)
+                end
+                my.interact.frame.pos.x, my.interact.frame.pos.y, my.interact.frame.pos.add = oldX, oldY, oldAdd
+                state.visibleItemIndices = {}
+                local scroll = my.interact.scrolls[id]
+                if scroll then scroll.y, scroll.yDestin = 0, 0 end
+            end
+            state.searchText, state.searchItems = searchText, items
             local isClosed = false
             local otherCheck = true
             if not isClosed or otherCheck then
@@ -4497,7 +4616,7 @@ my.interact.button = function(id, text, desc, func)
         return
     end
     if not my.interact.buttons[id] then
-        my.interact.buttons[id] = { r = 75.0, g = 75.0, b = 75.0 }
+        my.interact.buttons[id] = { r = 164.0, g = 164.0, b = 164.0 }
     end
     local buttonState = my.interact.buttons[id]
     local uniqueid = tostring(id or '') .. tostring(text or '') .. tostring(desc or '') .. tostring(my.interact.groupboxVars.curGroupbox or '')
@@ -4505,7 +4624,14 @@ my.interact.button = function(id, text, desc, func)
     local rowX = x + 10
     local rowY = y - (rowH / 2)
     local rowW = my.interact.groupboxVars.width - 20
-    local isHovered = my.mouse.isHovered(rowX, rowY, rowW, rowH)
+    local labelX, labelY, labelSize = rowX + 3, rowY + 2, 15.5
+    local currentBind = my.interact.bindVars.isBinding and my.interact.bindVars.curBind == id
+    local suffix = currentBind and ' [...]' or (my.binds.buttons[id] and my.binds.buttons[id].name
+        and (' [' .. tostring(my.binds.buttons[id].name) .. ']') or '')
+    local labelWidth = my.texts.getTextWidth(tostring(text or '') .. suffix, labelSize) or 0
+    local clip = my.interact.activeClipRect
+    if clip then labelWidth = math.min(labelWidth, math.max(0, clip.x + clip.w - labelX - 1)) end
+    local isHovered = labelWidth > 0 and my.mouse.isHovered(labelX, labelY, labelWidth, labelSize)
     if isHovered
         and not my.frame.blockClicks
         and not my.interact.bindVars.isBinding
@@ -4540,7 +4666,7 @@ my.interact.button = function(id, text, desc, func)
     if my.binds.buttons[id] then
         my.binds.buttons[id].func = func
     end
-    local targetColor = isHovered and 240 or 75
+    local targetColor = isHovered and 240 or 164
     buttonState.r = my.anim.lerp(buttonState.r, targetColor, 0.05)
     buttonState.g = my.anim.lerp(buttonState.g, targetColor, 0.05)
     buttonState.b = my.anim.lerp(buttonState.b, targetColor, 0.05)
@@ -4555,19 +4681,19 @@ my.interact.button = function(id, text, desc, func)
         rowY,
         rowW,
         rowH,
-        {12, 13, 17, 255},
-        0,
+        {0, 0, 0, 0},
+        4,
         false,
         3,
         '##buttonBg_' .. uniqueid
     )
     my.texts.drawText(
         tostring(text or '') .. bindText,
-        rowX + 3,
-        rowY + 2,
+        labelX,
+        labelY,
         false,
         'left',
-        15.5,
+        labelSize,
         {math.ceil(buttonState.r), math.ceil(buttonState.g), math.ceil(buttonState.b), 255},
         4,
         '##buttonText_' .. uniqueid
@@ -4598,72 +4724,31 @@ end
             state = {active = false, text = tostring((storage and storage[storageKey]) or '')}
             my.interact.listSearchStates[id] = state
         end
+        state.seenThisFrame = not my.interact.currentItemHiddenByScroll
         if storage and storage[storageKey] ~= nil and not state.active then
             state.text = tostring(storage[storageKey] or '')
         end
-        local isPlayerSearch = storageKey == 'search:player'
-        local label = isPlayerSearch and 'Pesquisar Player' or 'Pesquisar Veículo'
-        local placeholder = 'Digite aqui...'
-        local bx = x + 10
-        local bw = my.interact.groupboxVars.width - 20
-        local labelY = y - 19
-        local inputY = y + 1
-        local inputH = 27
+        local label = storageKey == 'search:player' and 'Pesquisar Player' or 'Pesquisar Veículo'
+        local bx, bw = x + 10, my.interact.groupboxVars.width - 20
+        local inputY, inputH = y + 1, 27
         local hovered = my.mouse.isHovered(bx, inputY, bw, inputH)
-        my.texts.drawText(label, bx, labelY, false, 'left', 14.0,
+        my.texts.drawText(label, bx, y - 16, false, 'left', 14.0,
             {151, 147, 157, 255}, 9, '##listSearchLabel_'..id)
-        local borderColor
-        if state.active then
-            borderColor = {my.colors.main[1], my.colors.main[2], my.colors.main[3], 215}
-        elseif hovered then
-            borderColor = {61, 57, 66, 255}
-        else
-            borderColor = {43, 40, 47, 255}
+        local borderColor = state.active and {my.colors.main[1], my.colors.main[2], my.colors.main[3], 215}
+            or (hovered and {61, 57, 66, 255} or {43, 40, 47, 255})
+        my.ui.drawRect(bx, inputY, bw, inputH,
+            {20, 19, 23, 255}, 4, false, 7, '##listSearchInner_'..id)
+        my.ui.drawRect(bx, inputY, bw, inputH, borderColor, 4, true, 8, '##listSearchOuter_'..id)
+        if not state.apiLegacyCleared then
+            NextAPI.Drawing.RemoveDraw('##listSearchText_'..id)
+            NextAPI.Drawing.RemoveDraw('##listSearchCaret_'..id)
+            state.apiLegacyCleared = true
         end
-        my.ui.drawRect(bx, inputY, bw, inputH, borderColor, 4, false, 7, '##listSearchOuter_'..id)
-        my.ui.drawRect(bx + 1, inputY + 1, bw - 2, inputH - 2,
-            {20, 19, 23, 255}, 4, false, 8, '##listSearchInner_'..id)
-        local displayText = state.text ~= '' and state.text or placeholder
-        local shownText = tostring(displayText)
-        local reservedRight = 31
-        while #shownText > 0 and my.texts.getTextWidth(shownText, 14.5) > (bw - reservedRight - 10) do
-            shownText = string.sub(shownText, 2)
-        end
-        local textColor = state.text ~= '' and 190 or 111
-        if state.active and state.text ~= '' then textColor = 218 end
-        my.texts.drawText(shownText, bx + 8, inputY + 5, false, 'left', 14.5,
-            {textColor, textColor, textColor, 255}, 9, '##listSearchText_'..id)
         local iconX = bx + bw - 25
-        my.ui.drawRect(iconX - 4, inputY + 5, 1, inputH - 10,
-            {48, 45, 52, 255}, 0, false, 9, '##listSearchSep_'..id)
-        my.ui.drawFontAwesome(my.fontAwesome.icons.keyboard, iconX + 7, inputY + 5, 14,
-            state.active and {my.colors.main[1], my.colors.main[2], my.colors.main[3], 255}
-                         or {120, 116, 127, 255},
-            true, 10, '##listSearchKeyboard_'..id)
-        if hovered and isLeftButtonJustPressed() and not my.frame.blockClicks then
-            state.active = true
-        elseif state.active and isLeftButtonJustPressed() and not hovered then
-            state.active = false
-        end
-        if state.active then
-            if IsKeyJustPressed(myAPI.Keys['ESC']) or IsKeyJustPressed(myAPI.Keys['ENTER']) then
-                state.active = false
-            else
-                if my.texts.getTextWidth(state.text or '', 14.5) < (bw - reservedRight - 18) then
-                    for txt, vkcode in pairs(myAPI.keysTextBox) do
-                        if vkcode and IsKeyJustPressed(vkcode) then
-                            local add = IsKeyPressed(myAPI.Keys['SHIFT']) and string.upper(txt) or txt
-                            state.text = (state.text or '') .. tostring(add)
-                        end
-                    end
-                end
-                if IsKeyPressed(myAPI.Keys['BACKSPACE']) and ((my.vars.listSearchBackDelay or 0) < GetGameTimer()) then
-                    my.vars.listSearchBackDelay = GetGameTimer() + 150
-                    state.text = string.sub(state.text or '', 1, -2)
-                end
-            end
-        end
-        if storage then storage[storageKey] = state.text or '' end
+        my.ui.drawFontAwesome(my.fontAwesome.icons.search, iconX + 7, inputY + 6, 14,
+            {140, 143, 154, 255}, true, 10, '##listSearchKeyboard_'..id)
+        my.ui.inputText('list-search:'..tostring(id), state,
+            bx, inputY, bw - 31, inputH, 'Digite para pesquisar', 14.5, 256, storage, storageKey)
     end
     my.interact.alphaListItem = function(id, text, selected, color, func)
         local canDisplay, x, y = nextGroupboxInfo()
@@ -4730,10 +4815,10 @@ end
         local isActive = my.bool[id] or false
         if not my.interact.checkboxAnimations[id] then
             my.interact.checkboxAnimations[id] = {
-                textR = 75.0, textG = 75.0, textB = 75.0,
-                boxR = isActive and my.colors.main[1] or 22.0,
-                boxG = isActive and my.colors.main[2] or 22.0,
-                boxB = isActive and my.colors.main[3] or 22.0,
+                textR = 164.0, textG = 164.0, textB = 164.0,
+                boxR = isActive and my.colors.main[1] or 48.0,
+                boxG = isActive and my.colors.main[2] or 50.0,
+                boxB = isActive and my.colors.main[3] or 59.0,
                 checkA = isActive and 255.0 or 0.0
             }
         end
@@ -4791,24 +4876,22 @@ end
                 end
             end
         end
-        local targetText = isActive and 255 or (isHovered and 240 or 75)
+        local targetText = isActive and 240 or (isHovered and 235 or 164)
         state.textR = my.anim.lerp(state.textR, targetText, 0.05)
         state.textG = my.anim.lerp(state.textG, targetText, 0.05)
         state.textB = my.anim.lerp(state.textB, targetText, 0.05)
-        local targetBoxR = isActive and my.colors.main[1] or 22
-        local targetBoxG = isActive and my.colors.main[2] or 22
-        local targetBoxB = isActive and my.colors.main[3] or 22
+        local targetBoxR = isActive and my.colors.main[1] or 48
+        local targetBoxG = isActive and my.colors.main[2] or 50
+        local targetBoxB = isActive and my.colors.main[3] or 59
         state.boxR = my.anim.lerp(state.boxR, targetBoxR, 0.12)
         state.boxG = my.anim.lerp(state.boxG, targetBoxG, 0.12)
         state.boxB = my.anim.lerp(state.boxB, targetBoxB, 0.12)
-        local boxSize = 18
-        local boxX = x + my.interact.groupboxVars.width - 30.5
-        local boxY = rowY + 1
-        local checkCenterX = boxX + (boxSize / 2)
+        local boxSize = 16
+        local boxX = math.floor(x + my.interact.groupboxVars.width - 30)
+        local boxY = rowY + 2
         local targetCheckA = isActive and 255 or 0
         -- Icone usa coordenadas atuais; nunca interpola posicao global durante scroll/drag.
         state.checkA = my.anim.lerp(state.checkA or targetCheckA, targetCheckA, 0.14)
-        local checkDrawX = checkCenterX
         local bindText = ''
         if isBinding then
             bindText = ' [...]'
@@ -4832,19 +4915,19 @@ end
             boxSize,
             boxSize,
             {math.ceil(state.boxR), math.ceil(state.boxG), math.ceil(state.boxB), 255},
-            4.8,
+            4,
             false,
             10,
             '##checkboxBox_' .. uniqueid
         )
-        my.ui.drawFontAwesome(
-            my.fontAwesome.icons.check,
-            checkDrawX,
-            boxY + 2,
-            13.0,
+        my.ui.drawRect(boxX, boxY, boxSize, boxSize,
+            isActive and {my.colors.main[1], my.colors.main[2], my.colors.main[3], 255}
+                or (isHovered and {108, 111, 125, 230} or {79, 82, 94, 180}),
+            4, true, 11, '##checkboxBorder_' .. uniqueid)
+        my.ui.drawCheckboxMark(
+            boxX, boxY, boxSize,
             {255, 255, 255, math.floor(state.checkA)},
-            true,
-            11,
+            12,
             '##checkboxChecked_' .. uniqueid
         )
         if isHovered and isLeftButtonJustPressed() and not my.frame.blockClicks then
@@ -4890,6 +4973,7 @@ end
             }
         end
         local state = my.interact.comboBoxes[id]
+        state.seenThisFrame = not my.interact.currentItemHiddenByScroll
         local animation = my.interact.comboAnimations[id]
         local uniqueid = tostring(id or '') .. tostring(text or '') .. tostring(my.interact.groupboxVars.curGroupbox or '')
         local groupWidth = my.interact.groupboxVars.width
@@ -4901,10 +4985,15 @@ end
         local optionHeight = 20
         local optionsHeight = (#items * optionHeight) + 5
         local targetOffset = state.bool and optionsHeight or 0
-        animation.offset = my.anim.lerp(animation.offset, targetOffset, 0.10)
-        if math.abs(animation.offset - targetOffset) < 0.5 then
-            animation.offset = targetOffset
+        local animationNow = GetGameTimer()
+        if animation.targetOffset ~= targetOffset then
+            animation.startOffset = animation.offset
+            animation.startTime = animationNow
+            animation.targetOffset = targetOffset
         end
+        local progress = math.max(0, math.min(1, (animationNow - animation.startTime) / 150))
+        local easedProgress = 1 - ((1 - progress) ^ 3)
+        animation.offset = animation.startOffset + (targetOffset - animation.startOffset) * easedProgress
         local headerHovered = my.mouse.isHovered(boxX, headerY, boxWidth, headerHeight)
         local targetTextColor = headerHovered and 245 or 193
         animation.r = my.anim.lerp(animation.r, targetTextColor, 0.05)
@@ -4916,7 +5005,7 @@ end
         local animatedColor = {red, green, blue, 255}
         local comboOrderBase = (state.bool or animation.offset > 1) and 900 or 8
         local titleScale = 15.5
-        local titleText = tostring(text or '') .. ':'
+        local titleText = tostring(text or '')
         my.texts.drawText(
             titleText,
             x + 12,
@@ -4973,21 +5062,23 @@ end
                 )
             end
         end
-        my.ui.drawRect(
-            boxX,
-            headerY,
-            boxWidth,
-            headerHeight + animation.offset,
-            {24, 24, 27, 255},
-            4,
-            false,
-            comboOrderBase,
-            '##comboBackground_' .. uniqueid
-        )
+        my.ui.drawRect(boxX, headerY, boxWidth, headerHeight + animation.offset,
+            {22, 23, 30, 255}, 5, false, comboOrderBase, '##comboBackground_' .. uniqueid)
+        local borderColor = (state.bool or headerHovered) and {78, 81, 92, 255}
+            or {52, 54, 64, 255}
+        my.ui.drawRect(boxX, headerY, boxWidth, headerHeight + animation.offset,
+            borderColor, 5, true, comboOrderBase + 1, '##comboBorder_' .. uniqueid)
+        if animation.offset > 1 then
+            my.ui.drawRect(boxX + 1, headerY + headerHeight, boxWidth - 2, 1,
+                {64, 66, 76, 180}, 0, false, comboOrderBase + 2, '##comboDivider_' .. uniqueid)
+        else
+            my.ui.drawRect(-10000, -10000, 1, 1, {0, 0, 0, 0}, 0, false,
+                comboOrderBase + 2, '##comboDivider_' .. uniqueid)
+        end
         local selectedText = tostring(state.option or combotext or 'Selecione')
         my.texts.drawText(
-            'Opção: ' .. selectedText,
-            boxX + 6,
+            selectedText,
+            boxX + 8,
             headerY + 3,
             false,
             'left',
@@ -4996,21 +5087,21 @@ end
             comboOrderBase + 2,
             '##comboSelected_' .. uniqueid
         )
-        local iconX = boxX + boxWidth - 18
-        local iconY = headerY + 6
+        local iconX = boxX + boxWidth - 15
+        local iconY = headerY + 4
         for line = 0, 2 do
             my.ui.drawRect(
-                iconX,
-                iconY + (line * 4),
-                8,
-                1,
-                animatedColor,
+                -10000, -10000, 1, 1,
+                {0, 0, 0, 0},
                 0,
                 false,
                 comboOrderBase + 2,
                 '##comboListIcon_' .. uniqueid .. '_' .. tostring(line)
             )
         end
+        my.ui.drawFontAwesome(state.bool and '\xEF\x81\xB7' or '\xEF\x81\xB8',
+            iconX, iconY, 11, {155, 158, 170, 255}, true,
+            comboOrderBase + 3, '##comboChevron_' .. uniqueid)
         if headerHovered and isLeftButtonJustPressed() then
             if not my.frame.blockClicks or state.bool then
                 local opening = not state.bool
@@ -5038,17 +5129,31 @@ end
             boxWidth,
             headerHeight + math.max(visibleDropdownHeight, 0)
         )
+        local previousOptionDraws = state.visibleOptionDraws or {}
+        local visibleOptionDraws = {}
         if state.bool or animation.offset > 1 then
             for index, item in ipairs(items) do
                 local itemY = dropdownTop + ((index - 1) * optionHeight) - (state.scroll or 0)
                 local relativeBottom = (index * optionHeight)
                 if relativeBottom <= visibleDropdownHeight + 1 then
+                    visibleOptionDraws[index] = true
                     local itemHovered = my.mouse.isHovered(boxX, itemY, boxWidth - 3, optionHeight)
-                    local itemColorValue = itemHovered and 255 or 185
+                    local isSelected = tostring(item) == selectedText
+                    local itemColorValue = isSelected and 240 or 185
                     local itemColor = {itemColorValue, itemColorValue, itemColorValue, 255}
+                    my.ui.drawRect(boxX + 3, itemY + 1, boxWidth - 6, optionHeight - 2,
+                        {0, 0, 0, 0},
+                        3, false, comboOrderBase + 2, '##comboItemBg_' .. uniqueid .. '_' .. tostring(index))
+                    my.ui.drawRect(boxX + 4, itemY + 4, 2, optionHeight - 8,
+                        {0, 0, 0, 0},
+                        1, false, comboOrderBase + 3, '##comboItemMark_' .. uniqueid .. '_' .. tostring(index))
+                    my.ui.drawFontAwesome(my.fontAwesome.icons.check,
+                        boxX + boxWidth - 15, itemY + 4, 11,
+                        {225, 227, 233, isSelected and 255 or 0}, true,
+                        comboOrderBase + 3, '##comboItemCheck_' .. uniqueid .. '_' .. tostring(index))
                     my.texts.drawText(
                         tostring(item),
-                        boxX + 6,
+                        boxX + 10,
                         itemY + 3,
                         false,
                         'left',
@@ -5076,6 +5181,20 @@ end
                 end
             end
         end
+        for index in pairs(previousOptionDraws) do
+            if not visibleOptionDraws[index] then
+                local suffix = uniqueid .. '_' .. tostring(index)
+                my.ui.drawRect(-10000, -10000, 1, 1, {0, 0, 0, 0}, 0, false,
+                    comboOrderBase + 2, '##comboItemBg_' .. suffix)
+                my.ui.drawRect(-10000, -10000, 1, 1, {0, 0, 0, 0}, 0, false,
+                    comboOrderBase + 3, '##comboItemMark_' .. suffix)
+                my.ui.drawFontAwesome(my.fontAwesome.icons.check, -10000, -10000, 1,
+                    {0, 0, 0, 0}, true, comboOrderBase + 3, '##comboItemCheck_' .. suffix)
+                my.texts.drawText('', -10000, -10000, false, 'left', 15.5,
+                    {0, 0, 0, 0}, comboOrderBase + 3, '##comboItem_' .. suffix)
+            end
+        end
+        state.visibleOptionDraws = visibleOptionDraws
         if state.bool and not dropdownHovered and not headerHovered and isLeftButtonJustPressed() then
             state.bool = false
             state.scroll = 0
@@ -5121,9 +5240,9 @@ end
         local value = slider.value
         if not my.interact.sliderAnimations[id] then
             my.interact.sliderAnimations[id] = {
-                r = 75.0,
-                g = 75.0,
-                b = 75.0,
+                r = 164.0,
+                g = 164.0,
+                b = 164.0,
                 fill = 0.0,
                 active = false
             }
@@ -5160,7 +5279,7 @@ end
         local sliderY = rowY + 8
         local hovered = my.mouse.isHovered(rowX, rowY, rowW, rowH)
         local sliderHovered = my.mouse.isHovered(sliderX - 4, sliderY - 5, sliderW + 8, sliderH + 10)
-        local targetText = hovered and 240 or 75
+        local targetText = hovered and 235 or 164
         state.r = my.anim.lerp(state.r, targetText, 0.08)
         state.g = my.anim.lerp(state.g, targetText, 0.08)
         state.b = my.anim.lerp(state.b, targetText, 0.08)
@@ -5189,14 +5308,16 @@ end
             valueText = tostring(math.floor(value))
         end
         local valueColor = state.active and 255 or 150
+        local valueWidth = my.texts.getTextWidth(valueText, 14.0) or 0
+        local valueX = math.min(sliderX + sliderW + 8, x + groupW - 9 - valueWidth)
         my.texts.drawText(
             valueText,
-            x + groupW - 42,
+            valueX,
             labelY,
             false,
             'left',
             14.0,
-            {valueColor, valueColor, valueColor, (hovered or state.active) and 255 or 0},
+            {valueColor, valueColor, valueColor, 255},
             15,
             '##sliderValue_' .. uniqueid
         )
@@ -5205,7 +5326,7 @@ end
             sliderY,
             sliderW,
             sliderH,
-            {30, 30, 35, 255},
+            {53, 55, 64, 255},
             sliderH / 2,
             false,
             13,
@@ -5272,6 +5393,28 @@ end
     end
     my.interact.colorpickers = {}
     my.interact.colorpickerAnimations = my.interact.colorpickerAnimations or {}
+    function my.interact.closeColorpicker(deferUnlock)
+        local id = my.interact.openColorpicker
+        if not id then return end
+        local state = my.interact.colorpickers[id]
+        if state then
+            state.active, state.dragging, state.alphaAnim = false, nil, 0
+            if state.drawId then
+                local clip = my.interact.activeClipRect
+                my.interact.activeClipRect = nil
+                for _, prefix in ipairs({'##colorpickerOuter_', '##colorpickerPanel_', '##colorpickerHueBase_', '##colorpickerCursor_', '##colorpickerHueCursor_'}) do
+                    my.ui.drawRect(-10000, -10000, 1, 1, {0, 0, 0, 0}, 0, false, 920, prefix .. state.drawId)
+                end
+                for _, item in ipairs({{'colorpicker_gradient', '##colorpickerGradient_'}, {'colorpicker_huebar', '##colorpickerHue_'}}) do
+                    my.ui.drawImage(item[1], -10000, -10000, 1, 1, {0, 0, 0, 0}, 921, item[2] .. state.drawId)
+                end
+                my.interact.activeClipRect = clip
+            end
+        end
+        my.interact.openColorpicker = nil
+        my.frame.colorpickerReleasePending = deferUnlock == true
+        if not deferUnlock then my.frame.blockClicks = false end
+    end
     my.interact.colorpicker = function (id, text, desc, defcolor, func, funcdrag)
         local canDisplay, x, y = nextGroupboxInfo()
         if not canDisplay then
@@ -5300,6 +5443,16 @@ end
             }
         end
         local state = my.interact.colorpickers[id]
+        state.seenThisFrame = true
+        -- Theme presets can change the same color outside the picker.
+        if id == 'ax_corPers' and not state.active and state.color and (
+            state.color[1] ~= initialRGB[1] or state.color[2] ~= initialRGB[2] or state.color[3] ~= initialRGB[3]
+        ) then
+            state.color = {initialRGB[1], initialRGB[2], initialRGB[3], initialRGB[4]}
+            state.alpha = initialRGB[4]
+            state.hue, state.saturation, state.value = my.math.RGBtoHSV(state.color)
+            state.hex = my.math.rgbToHex(state.color)
+        end
         state.color = state.color or {initialRGB[1], initialRGB[2], initialRGB[3], initialRGB[4]}
         state.alpha = state.alpha or state.color[4] or initialRGB[4]
         state.hue = state.hue or 0
@@ -5319,6 +5472,10 @@ end
             tostring(id or '') ..
             tostring(text or '') ..
             tostring(my.interact.groupboxVars.curGroupbox or '')
+        state.drawId = uniqueid
+        if my.interact.currentItemHiddenByScroll then
+            if my.interact.openColorpicker == id then my.interact.closeColorpicker(true) end
+        end
         local rowX = x + 10
         local rowY = y - 9
         local rowW = my.interact.groupboxVars.width - 20
@@ -5326,16 +5483,16 @@ end
         local rowHovered = my.mouse.isHovered(rowX, rowY, rowW, rowH)
         if not my.interact.colorpickerAnimations[id] then
             my.interact.colorpickerAnimations[id] = {
-                r = rowHovered and 255.0 or 65.0,
-                g = rowHovered and 255.0 or 65.0,
-                b = rowHovered and 255.0 or 65.0,
+                r = rowHovered and 235.0 or 164.0,
+                g = rowHovered and 235.0 or 164.0,
+                b = rowHovered and 235.0 or 164.0,
                 previewR = state.color[1] or 255,
                 previewG = state.color[2] or 255,
                 previewB = state.color[3] or 255
             }
         end
         local anim = my.interact.colorpickerAnimations[id]
-        local targetText = rowHovered and 255 or 65
+        local targetText = rowHovered and 235 or 164
         anim.r = my.anim.lerp(anim.r, targetText, 0.05)
         anim.g = my.anim.lerp(anim.g, targetText, 0.05)
         anim.b = my.anim.lerp(anim.b, targetText, 0.05)
@@ -5379,32 +5536,37 @@ end
             5,
             '##colorpickerPreview_' .. uniqueid
         )
-        if rowHovered and isLeftButtonJustPressed() and not my.frame.blockClicks then
-            state.active = not state.active
-            my.frame.blockClicks = state.active
-            if state.active and func and type(func) == 'function' then
-                func({state.color[1], state.color[2], state.color[3], state.alpha})
+        if my.interact.currentItemHiddenByScroll then return end
+        if rowHovered and isLeftButtonJustPressed() then
+            if state.active then
+                my.interact.closeColorpicker(true)
+            elseif not my.frame.blockClicks then
+                state.active = true
+                state.dragging = nil
+                my.interact.openColorpicker = id
+                my.frame.blockClicks = true
             end
         end
         if state.active and (
             IsDisabledControlPressed(1, 15) or
             IsDisabledControlPressed(1, 14)
         ) then
-            state.active = false
-            my.frame.blockClicks = false
+            my.interact.closeColorpicker(true)
         end
-        local targetAlpha = state.active and 255 or 0
-        state.alphaAnim = my.anim.lerp(state.alphaAnim, targetAlpha, 0.15)
-        if math.abs(state.alphaAnim - targetAlpha) < 1 then
-            state.alphaAnim = targetAlpha
-        end
-        local overlayAlpha = math.floor(state.alphaAnim + 0.5)
-        if overlayAlpha <= 5 then
-            return
-        end
+        if not state.active then return end
+        local overlayAlpha = 255
         local panelW, panelH = 218, 180
         local panelX = x + my.interact.groupboxVars.width - 25
         local panelY = y + 31
+        local menuX, menuY = my.pos.mainBackground.x, my.pos.mainBackground.y
+        local menuW, menuH = my.sizes.mainBackground[1], my.sizes.mainBackground[2]
+        if panelX + panelW > menuX + menuW - 8 then panelX = x - panelW + 25 end
+        panelX = math.max(menuX + 8, math.min(menuX + menuW - panelW - 8, panelX))
+        panelY = math.max(menuY + 8, math.min(menuY + menuH - panelH - 8, panelY))
+        -- The popup is not clipped by the groupbox and must appear above other controls.
+        local previousClip, previousOrder = my.interact.activeClipRect, my.interact.activeDrawOrderOffset
+        my.interact.activeClipRect = nil
+        my.interact.activeDrawOrderOffset = 900
         local gradientX = panelX + 10
         local gradientY = panelY + 10
         local gradientW = 198
@@ -5505,9 +5667,14 @@ end
             hueW,
             hueH
         )
-        if isLeftButtonPressed() then
+        if isLeftButtonJustPressed() then
+            if overGradient then state.dragging = 'gradient'
+            elseif overHue then state.dragging = 'hue' end
+        end
+        if not isLeftButtonPressed() then state.dragging = nil end
+        if isLeftButtonPressed() and state.dragging then
             local changed = false
-            if overGradient then
+            if state.dragging == 'gradient' then
                 state.saturation = math.max(
                     0,
                     math.min(100, ((mouseX - gradientX) / (gradientW - 1)) * 100)
@@ -5517,7 +5684,7 @@ end
                     math.min(100, (1 - ((mouseY - gradientY) / (gradientH - 1))) * 100)
                 )
                 changed = true
-            elseif overHue then
+            elseif state.dragging == 'hue' then
                 state.hue = math.max(
                     0,
                     math.min(360, ((mouseX - hueX) / (hueW - 1)) * 360)
@@ -5555,13 +5722,12 @@ end
         )
         if state.active then
             if IsKeyJustPressed(myAPI.Keys['ESC']) then
-                state.active = false
-                my.frame.blockClicks = false
+                my.interact.closeColorpicker(true)
             elseif isLeftButtonJustPressed() and not rowHovered and not overPanel then
-                state.active = false
-                my.frame.blockClicks = false
+                my.interact.closeColorpicker(true)
             end
         end
+        my.interact.activeClipRect, my.interact.activeDrawOrderOffset = previousClip, previousOrder
     end
     my.interact.inputs = my.interact.inputs or {}
     my.interact.input = function(id, text, storage, storageKey, icon, search, func)
@@ -5569,167 +5735,52 @@ end
         if not canDisplay then return end
         storage = storage or {}
         storageKey = storageKey or id
-        if storage[storageKey] == nil then
-            storage[storageKey] = ''
-        end
+        if storage[storageKey] == nil then storage[storageKey] = '' end
         if not my.interact.inputs[id] then
             my.interact.inputs[id] = {
-                active = false,
-                text = tostring(storage[storageKey] or ''),
+                active = false, text = tostring(storage[storageKey] or ''),
                 r = 75.0, g = 75.0, b = 75.0
             }
         end
         local state = my.interact.inputs[id]
-        if not state.active then
-            state.text = tostring(storage[storageKey] or state.text or '')
-        end
-        local rowX = x + 10
-        local rowY = y - 10
-        local rowW = my.interact.groupboxVars.width - 20
-        local rowH = 20
-        local titleScale = 16.0
-        local titleText = tostring(text or '')
-        local titleWidth = my.texts.getTextWidth(titleText, titleScale) or 0
-        local inputY = rowY + 3
-        local inputH = 15
-        local iconSlot = 30
-        local inputEnd = rowX + rowW + 3
-        local inputX = rowX + 3 + titleWidth + 8
-        local inputW = inputEnd - inputX - iconSlot
-        if inputW < 42 then
-            inputW = 42
-            inputX = inputEnd - iconSlot - inputW
-        end
-        local fieldHover = my.mouse.isHovered(inputX, inputY, inputW, inputH)
+        state.seenThisFrame = not my.interact.currentItemHiddenByScroll
+        if not state.active then state.text = tostring(storage[storageKey] or state.text or '') end
+        local rowX, rowW, rowY, rowH = x + 10, my.interact.groupboxVars.width - 20, y - 16, 44
+        local inputY, inputH = y + 1, 27
+        local fieldHover = my.mouse.isHovered(rowX, inputY, rowW, inputH)
         local rowHover = my.mouse.isHovered(rowX, rowY, rowW, rowH)
-        local target = state.active and 220 or (rowHover and 180 or 75)
-        state.r = my.anim.lerp(state.r or 75, target, 0.08)
-        state.g = my.anim.lerp(state.g or 75, target, 0.08)
-        state.b = my.anim.lerp(state.b or 75, target, 0.08)
-        local cr, cg, cb = math.ceil(state.r), math.ceil(state.g), math.ceil(state.b)
+        local target = state.active and 235 or (rowHover and 220 or 164)
+        state.r = my.anim.lerp(state.r or 164, target, 0.08)
+        state.g = my.anim.lerp(state.g or 164, target, 0.08)
+        state.b = my.anim.lerp(state.b or 164, target, 0.08)
         local uniqueid = tostring(id or '') .. tostring(my.interact.groupboxVars.curGroupbox or '')
-        my.texts.drawText(
-            titleText,
-            rowX + 3,
-            rowY + 2,
-            false,
-            'left',
-            titleScale,
-            {cr, cg, cb, 255},
-            10,
-            '##inputTitle_' .. uniqueid
-        )
-        my.ui.drawRect(
-            inputX,
-            inputY,
-            inputW,
-            inputH,
-            {20, 20, 20, 255},
-            3,
-            false,
-            10,
-            '##inputBg_' .. uniqueid
-        )
-        local iconX = inputX + inputW + 10
-        local inputIcon
-        if search then
-            inputIcon = my.fontAwesome.icons.search
-        elseif type(icon) == 'string' and icon ~= '' then
-            inputIcon = icon
-        else
-            inputIcon = my.fontAwesome.icons.eye
+        my.texts.drawText(tostring(text or ''), rowX, rowY, false, 'left', 14.0,
+            {math.ceil(state.r), math.ceil(state.g), math.ceil(state.b), 255},
+            10, '##inputTitle_' .. uniqueid)
+        local borderColor = state.active and {my.colors.main[1], my.colors.main[2], my.colors.main[3], 215}
+            or (fieldHover and {78, 81, 92, 255} or {52, 54, 64, 255})
+        my.ui.drawRect(rowX, inputY, rowW, inputH, {22, 23, 30, 255},
+            5, false, 9, '##inputBg_' .. uniqueid)
+        my.ui.drawRect(rowX, inputY, rowW, inputH, borderColor,
+            5, true, 10, '##inputBorder_' .. uniqueid)
+        if not state.apiLegacyCleared then
+            NextAPI.Drawing.RemoveDraw('##inputValue_' .. uniqueid)
+            NextAPI.Drawing.RemoveDraw('##inputCursor_' .. uniqueid)
+            NextAPI.Drawing.RemoveDraw('##inputIcon_' .. uniqueid)
+            state.apiLegacyCleared = true
         end
-        my.ui.drawFontAwesome(
-            inputIcon,
-            iconX,
-            inputY,
-            16.0,
-            {my.colors.main[1], my.colors.main[2], my.colors.main[3], 255},
-            true,
-            11,
-            '##inputIcon_' .. uniqueid
-        )
-        local displayText = tostring(state.text or '')
-        local maxTextW = math.max(5, inputW - 10)
-        while #displayText > 0 and (my.texts.getTextWidth(displayText, 14.0) or 0) > maxTextW do
-            displayText = string.sub(displayText, 2)
-        end
-        local textColor = state.active and {255, 255, 255, 255} or {180, 180, 180, 255}
-        my.texts.drawText(
-            displayText,
-            inputX + 5,
-            inputY,
-            false,
-            'left',
-            14.0,
-            textColor,
-            11,
-            '##inputValue_' .. uniqueid
-        )
-        if state.active and (GetGameTimer() % 1000) < 500 then
-            local shownW = my.texts.getTextWidth(displayText, 14.0) or 0
-            local cursorX = math.min(inputX + inputW - 3, inputX + 5 + shownW)
-            my.ui.drawRect(
-                cursorX,
-                inputY + 1,
-                1,
-                12,
-                {255, 255, 255, 255},
-                0,
-                false,
-                12,
-                '##inputCursor_' .. uniqueid
-            )
-        else
-            my.ui.drawRect(
-                inputX,
-                inputY,
-                1,
-                1,
-                {0, 0, 0, 0},
-                0,
-                false,
-                12,
-                '##inputCursor_' .. uniqueid
-            )
-        end
-        if fieldHover and isLeftButtonJustPressed() and not my.frame.blockClicks then
-            for otherId, other in pairs(my.interact.inputs) do
-                if otherId ~= id then other.active = false end
-            end
-            state.active = true
-        end
-        if state.active then
-            local changed = false
-            if IsKeyJustPressed(myAPI.Keys['ESC']) or IsKeyJustPressed(myAPI.Keys['ENTER']) then
-                state.active = false
-                if func and type(func) == 'function' then func(state.text) end
-            elseif isLeftButtonJustPressed() and not fieldHover then
-                state.active = false
-                if func and type(func) == 'function' then func(state.text) end
-            else
-                for txtKey, keyCode in pairs(myAPI.keysTextBox) do
-                    if keyCode and IsKeyJustPressed(keyCode) then
-                        local add = tostring(txtKey)
-                        if IsKeyPressed(myAPI.Keys['SHIFT']) then
-                            add = string.upper(add)
-                        end
-                        state.text = tostring(state.text or '') .. add
-                        changed = true
-                    end
-                end
-                if IsKeyPressed(myAPI.Keys['BACKSPACE']) and ((state.backDelay or 0) <= GetGameTimer()) then
-                    state.backDelay = GetGameTimer() + 100
-                    state.text = string.sub(tostring(state.text or ''), 1, -2)
-                    changed = true
-                end
-            end
-            storage[storageKey] = tostring(state.text or '')
-            if changed and func and type(func) == 'function' then
-                func(storage[storageKey])
-            end
-        else
-            storage[storageKey] = tostring(state.text or storage[storageKey] or '')
+        local placeholders = {
+            numerodaradio = 'Ex.: 123', numerodahrs = 'Digite a hora',
+            nome_veiculo = 'Digite o modelo', nome_arma_personalizada = 'Ex.: pistol_mk2',
+            pesquisarssss = 'Digite a placa', roupa_nome = 'Digite um nome',
+            teleporte_nome = 'Digite um nome'
+        }
+        local wasActive = state.active
+        local value, changed, submitted, focused = my.ui.inputText('field:'..tostring(id), state,
+            rowX, inputY, rowW, inputH, placeholders[storageKey] or 'Digite aqui',
+            14.0, 1024, storage, storageKey)
+        if type(func) == 'function' and (changed or submitted or (wasActive and not focused)) then
+            func(value)
         end
     end
     my.interact.dragVars =
@@ -5740,15 +5791,20 @@ end
     }
     function my.interact.drag()
     -- Neutralize old named drawings if the renderer retains them between loads.
-    my.ui.drawRect(-100, -100, 1, 1, {0, 0, 0, 0}, 0, false, 2, '##dragBackgrounddefault')
-    my.ui.drawRect(-100, -100, 1, 1, {0, 0, 0, 0}, 0, false, 2, '##dragBackgroundhovered')
-    my.ui.drawImage('move_icon', -100, -100, 1, 1, {255, 255, 255, 0}, 3, '##dragArrowIcon')
-    local x, y = my.pos.mainBackground.x, my.pos.mainBackground.y
-    local wIcon, hIcon = 40, 40
+    if not my.interact.dragVars.legacyDrawingsCleared then
+        my.ui.drawRect(-100, -100, 1, 1, {0, 0, 0, 0}, 0, false, 2, '##dragBackgrounddefault')
+        my.ui.drawRect(-100, -100, 1, 1, {0, 0, 0, 0}, 0, false, 2, '##dragBackgroundhovered')
+        my.ui.drawImage('move_icon', -100, -100, 1, 1, {255, 255, 255, 0}, 3, '##dragArrowIcon')
+        my.interact.dragVars.legacyDrawingsCleared = true
+    end
+    local x, y = my.math.centerPos(my.sizes.mainBackground[1], my.sizes.mainBackground[2])
+    x, y = x + my.interact.dragVars.pos.x, y + my.interact.dragVars.pos.y
+    -- Keep the logo draggable without capturing clicks on the search field below it.
+    local wIcon, hIcon = my.sizes.subtabBackground[1], 90
     local xIcon, yIcon = x, y
     local isIconHover = my.mouse.isHovered(xIcon, yIcon, wIcon, hIcon)
     local cursorPosX, cursorPosY = my.mouse.getCursorPosition()
-    if isIconHover and isLeftButtonJustPressed() then
+    if isIconHover and isLeftButtonJustPressed() and not my.frame.blockClicks then
         my.cache.maindragX = my.interact.dragVars.pos.x - cursorPosX
         my.cache.maindragY = my.interact.dragVars.pos.y - cursorPosY
         my.cache.mainDragging = true
@@ -5758,9 +5814,10 @@ end
     if my.cache.mainDragging then
         local targetX = cursorPosX + my.cache.maindragX
         local targetY = cursorPosY + my.cache.maindragY
-        local centerX, centerY = my.math.centerPos(my.sizes.mainBackground[1], my.sizes.mainBackground[2])
-        my.interact.dragVars.pos.x = math.max(-centerX, math.min(my.screen.w - centerX - my.sizes.mainBackground[1], targetX))
-        my.interact.dragVars.pos.y = math.max(-centerY, math.min(my.screen.h - centerY - my.sizes.mainBackground[2], targetY))
+        local limitX = math.max(0, (my.screen.w / menuScale - my.sizes.mainBackground[1]) / 2)
+        local limitY = math.max(0, (my.screen.h / menuScale - my.sizes.mainBackground[2]) / 2)
+        my.interact.dragVars.pos.x = math.max(-limitX, math.min(limitX, targetX))
+        my.interact.dragVars.pos.y = math.max(-limitY, math.min(limitY, targetY))
     end
     -- A janela inteira acompanha um deslocamento unico, sem interpolar
     -- separadamente o fundo e os controles.
@@ -5768,11 +5825,28 @@ end
     my.vars.dragPos.y = my.interact.dragVars.pos.y
     end
     my.others = {}
+    function my.others.isTyping()
+        if not my.mainVars.draw then return false end
+        for _, state in pairs(my.ui.textInputs) do
+            if state.active then return true end
+        end
+        return false
+    end
     function my.others.isSearching()
-    return (my.interact.searchVars.text ~= '')
+    return (my.interact.searchVars.text or ''):match('%S') ~= nil
     end
     function my.others.searchCheck(input, text)
-    return text:lower():find(input:lower(), 1, true) ~= nil
+        local function normalize(value)
+            local result = tostring(value or ''):lower()
+            local accents = {['á']='a', ['à']='a', ['â']='a', ['ã']='a', ['ä']='a', ['Á']='a', ['À']='a', ['Â']='a', ['Ã']='a', ['é']='e', ['ê']='e', ['É']='e', ['Ê']='e', ['í']='i', ['Í']='i', ['ó']='o', ['ô']='o', ['õ']='o', ['Ó']='o', ['Ô']='o', ['Õ']='o', ['ú']='u', ['Ú']='u', ['ç']='c', ['Ç']='c'}
+            for accented, plain in pairs(accents) do result = result:gsub(accented, plain) end
+            return result
+        end
+        local target = normalize(text)
+        for word in normalize(input):gmatch('%S+') do
+            if not target:find(word, 1, true) then return false end
+        end
+        return true
     end
     function my.others.isAdmin(player)
     return true
@@ -5823,6 +5897,8 @@ end
         next.values.colorpicker = next.values.colorpicker or {}
         local currentBox = nil
         local boxSerial = 0
+        local query = my.others.isSearching() and my.interact.searchVars.text or ''
+        local searchMatches = 0
         local function safeId(value, fallback)
             local txt = tostring(value ~= nil and value or fallback or '')
             txt = string.gsub(txt, '[^%w_:%-%.]', '_')
@@ -5830,11 +5906,21 @@ end
         end
         local function flushGroupbox()
             if not currentBox then return end
+            local displayedItems = currentBox.items
+            if query ~= '' then
+                displayedItems = {}
+                for _, item in ipairs(currentBox.items) do
+                    if item.text and my.others.searchCheck(query, item.text) then
+                        displayedItems[#displayedItems + 1] = item
+                        searchMatches = searchMatches + 1
+                    end
+                end
+            end
             my.interact.groupbox(
                 currentBox.id,
                 currentBox.name,
                 currentBox.height,
-                currentBox.items,
+                displayedItems,
                 currentBox.x,
                 currentBox.y,
                 currentBox.icon
@@ -6027,9 +6113,9 @@ end
                 success = 'success', sucesso = 'success',
                 error = 'error', erro = 'error',
                 warning = 'warning', aviso = 'warning',
-                info = 'info', information = 'info'
+                info = 'warning', information = 'warning'
             }
-            local finalKind = map[normalized] or 'info'
+            local finalKind = map[normalized] or 'warning'
             local msg = tostring(message or '')
             local ok = pcall(function()
                 my.interact.notify(msg, finalKind, time)
@@ -6037,13 +6123,12 @@ end
             if not ok then
                 local direct = {
                     success = {name = 'Sucesso', icon = 'f058'},
-                    info = {name = 'Info', icon = 'f05a'},
                     error = {name = 'Erro', icon = 'f057'},
                     warning = {name = 'Aviso', icon = 'f071'},
                 }
-                local data = direct[finalKind] or direct.info
+                local data = direct[finalKind] or direct.warning
                 pcall(function()
-                    my.interact.Notify(msg, data.name, data.icon, time or 5000)
+                    my.interact.Notify(msg, data.name, data.icon, time or 5000, finalKind)
                 end)
             end
         end
@@ -6322,8 +6407,9 @@ end)
                     next.elements.groupbox("Segundario", "secundario", "\xee\x93\xa5", 305, 0, 290, 260)
 if anticheat ~= "Fiveguard" then
     next.elements.button("Teleportar para Waypoint", "tpway", function()
+        if not menuApi.require('SyncTree.SpoofServerWaypoint') then return end
         nt.createTh(function()
-            NextAPI.SyncTree.SpoofServerWaypoint(true)
+            menuApi.call('SyncTree.SpoofServerWaypoint', true)
             local ped = PlayerPedId()
             local vehicle = nil
 
@@ -6360,14 +6446,18 @@ if anticheat ~= "Fiveguard" then
                 Wait(1)
             end
         end)
-        NextAPI.SyncTree.SpoofServerWaypoint(false)
+        menuApi.call('SyncTree.SpoofServerWaypoint', false)
     end)
 
     next.elements.checkbox("Auto Teleportar para Waypoint", "autoTP", function(bool)
         if not bool then return end
+        if not menuApi.require('SyncTree.SpoofServerWaypoint') then
+            next.values.checkbox.autoTP, my.bool.autoTP = false, false
+            return
+        end
 
         nt.createTh(function()
-            NextAPI.SyncTree.SpoofServerWaypoint(true)
+            menuApi.call('SyncTree.SpoofServerWaypoint', true)
             local groundCheckHeights = {
                 0, 50.0, 100.0, 150.0, 200.0, 250.0, 300.0, 350.0,
                 400.0, 450.0, 500.0, 550.0, 600.0, 650.0, 700.0, 750.0,
@@ -6441,7 +6531,7 @@ if anticheat ~= "Fiveguard" then
                 Wait(1)
             end
         end)
-        NextAPI.SyncTree.SpoofServerWaypoint(false)
+        menuApi.call('SyncTree.SpoofServerWaypoint', false)
     end)
 end
                     next.elements.checkbox("Mundo Solo", "mundo", function(bool)
@@ -6757,6 +6847,12 @@ end
 
 if not specialNoclipAC then
 next.elements.checkbox("Noclip", "noclip", function(bool)
+    local mode = next.values.combobox.modoNc
+    if bool and (mode == 'Noclip Solo 2' or mode == 'Solo Session')
+        and not menuApi.require('SyncCameraPosition') then
+        next.values.checkbox.noclip, my.bool.noclip = false, false
+        return
+    end
     if bool then
         nt.createTh(function()
             if anticheat == "Waveshield" or anticheat == "Fiveguard" or anticheat == "Não Detectado" or anticheat == "ElectronAC" then
@@ -6998,7 +7094,7 @@ elseif modo == "Noclip Solo 2" then
         
         while next.values.checkbox["noclip"] do
             Wait(0)
-            NextAPI.SyncCameraPosition(true, GetEntityCoords(clone_ped))
+            menuApi.call('SyncCameraPosition', true, GetEntityCoords(clone_ped))
             next.functions['display_message']("Você está no Noclip Solo 2!", true)
             FreezeEntityPosition(PlayerPedId(), true)
             
@@ -7145,7 +7241,7 @@ end
                 NextAPI.Scripting.RestoreNative(0x19CAFA3C87F7C2FF)
                 NextAPI.Scripting.RestoreNative(0xE31C2C72B8692B64)
                 NextAPI.Scripting.RestoreNative(0xD9D2CFFF49FAB35F)
-                NextAPI.SyncCameraPosition(false)
+                menuApi.call('SyncCameraPosition', false)
             end
         end)
     end
@@ -7156,16 +7252,21 @@ next._noclip2ThreadRunning = next._noclip2ThreadRunning or false
 
 if specialNoclipAC then
  next.elements.checkbox("Noclip", "noclip", function(bool)
+    local mode = next.values.combobox.modoNc
+    if bool and (mode == 'Noclip Solo 2' or mode == 'Solo Session')
+        and not menuApi.require('SyncCameraPosition') then
+        next.values.checkbox.noclip, my.bool.noclip = false, false
+        return
+    end
     if bool then
           local coords = GetEntityCoords(PlayerPedId())
-          NextAPI.SyncTree.SpoofServerCoords(true, coords)
+          -- NextAPI.SyncTree.SpoofServerCoords(true, coords)
           NextAPI['Scripting']['HookNative']("GetGroundZFor_3dCoord", false)
           NextAPI['Scripting']['HookNative']("GetEntityCoords", vector3(0.0, 0.0, 0.0))
           NextAPI['Scripting']['HookNative']("IsPedStill", 1.0)
           NextAPI['Scripting']['HookNative']("GetEntityHeightAboveGround", 1.0)   
           NextAPI['Scripting']['HookNative']("IsEntityInAir", false)
         nt.createTh(function()
-            NextAPI.BlockEvent('vRP:tunnel_req', true)
             if next.values.combobox['modoNc'] == "Solo Session" then
                 local modelHash = GetHashKey('mp_m_freemode_01')
                 while not HasModelLoaded(modelHash) do
@@ -7196,7 +7297,7 @@ if specialNoclipAC then
                 FreezeEntityPosition(PlayerPedId(), true)
                 
                 while next.values.checkbox["noclip"] do
-                    NextAPI.SyncCameraPosition(true, GetEntityCoords(desyncPed))
+                    menuApi.call('SyncCameraPosition', true, GetEntityCoords(desyncPed))
                     next.functions['display_message']("Você está com o Solo Session ativo!", true)
 
                     SetEntityCoords(PlayerPedId(), 9396.0, -6741.0, -107.0, false, false, false, false)
@@ -7277,7 +7378,7 @@ if specialNoclipAC then
                     SetEntityCoordsNoOffset(PlayerPedId(), lastCoords.x, lastCoords.y, lastCoords.z, true, true, true)
                     DeletePed(desyncPed)
                     FreezeEntityPosition(PlayerPedId(), false)
-                    NextAPI.SyncCameraPosition(false)
+                    menuApi.call('SyncCameraPosition', false)
                 end
             else
                 while next.values.checkbox["noclip"] do
@@ -7287,7 +7388,6 @@ if specialNoclipAC then
                     end
 
                     if group == "Lotus Group" then
-                        NextAPI.BlockEvent("vRP:tunnel_req", true)
                     end
 
                     if anticheat == "MQCU" then
@@ -7435,7 +7535,6 @@ if specialNoclipAC then
                 FreezeEntityPosition(entity, false)
                 
                 if group == "Lotus Group" then
-                    NextAPI.BlockEvent("vRP:tunnel_req", false)
                 end
 
                 if GetResourceState("eqpg-library") == "started" then
@@ -7457,7 +7556,7 @@ if specialNoclipAC then
                     NextAPI.Scripting.RestoreNative(0x94495889E22C6479)
                 end
 
-                NextAPI.SyncTree.SpoofServerCoords(false)
+                -- NextAPI.SyncTree.SpoofServerCoords(false)
 
                 if anticheat == "PL_PROTECT" then
                     NextAPI.Inject('PL_PROTECT', [[
@@ -7521,7 +7620,7 @@ end)
             end
         end
      nt.createTh(function()
-        NextAPI.SyncTree.SpoofServerDamage(true, GetHashKey("WEAPON_HEN"))
+        NextAPI.SyncTree.SpoofWeaponDamage(true, GetHashKey("WEAPON_HEN"))
         next.bypass['weapon'](true)
         NextAPI.Scripting.HookNative('ShootSingleBulletBetweenCoords', false)
         while next.values.checkbox["superlazer"] do
@@ -7539,7 +7638,7 @@ end)
                 end
             end
         end
-        NextAPI.SyncTree.SpoofServerDamage(false, GetHashKey("WEAPON_HEN"))
+        NextAPI.SyncTree.SpoofWeaponDamage(false, GetHashKey("WEAPON_HEN"))
         next.bypass['weapon'](false)
     end)
     end)
@@ -7872,7 +7971,7 @@ next.elements.checkbox("Bloquear Attach", "blockAttach", function(state)
                         NetworkRequestControlOfEntity(vehicle)
                         DetachEntity(vehicle, 0, true)
                         if IsVehicleSeatFree(vehicle, -1) then
-                            next:Notify("Tentaram te grudar um carro.")
+                            next.elements.notify("Tentaram te grudar um carro.", "warning")
                         end
                     end
                 end
@@ -8035,9 +8134,9 @@ end)
                                 end
                                 if closestPed then
                                     ClonePedToTarget(closestPed, myPed)
-                                    next.elements.notify("Roupa copiada com sucesso!")
+                                    next.elements.notify("Roupa copiada com sucesso!", "success")
                                 else
-                                    next.elements.notify("Nenhum jogador próximo encontrado.")
+                                    next.elements.notify("Nenhum jogador próximo encontrado.", "warning")
                                 end
                             end)
                             next.elements.groupbox("Roupas Salvas", "Roupas_SALVAS", "\xef\x95\x93", 280, 305, 270, 140)
@@ -8048,11 +8147,11 @@ end)
                                 }
                                 local ok, encoded = pcall(json.encode, config)
                                 if ok and encoded then
-                                    NextAPI.GetVar("config", encoded)
+                                    NextAPI.Cloud.SaveVariable("config", encoded)
                                 end
                             end
                             local function loadSavedOutfits()
-                                local saved = NextAPI.GetVar("savedOutfits")
+                                local saved = NextAPI.Cloud.GetVariable("savedOutfits")
                                 if type(saved) == "table" then
                                     return saved
                                 end
@@ -8088,7 +8187,7 @@ next.elements.button("Salvar Roupa", "salvar_roupa", function()
         name = outfitName,
         data = outfit
     })
-    NextAPI.SetVar("savedOutfits", json.encode(next.vars.savedOutfits))
+    NextAPI.Cloud.SaveVariable("savedOutfits", json.encode(next.vars.savedOutfits))
     saveCloudConfig()
     next.elements.notify("Roupa salva como: " .. outfitName, "success")
 end)
@@ -8132,10 +8231,10 @@ for index, outfitInfo in ipairs(next.vars.savedOutfits) do
         end)
         next.elements.button("Eliminar " .. outfitInfo.name, "eliminar_" .. index, function()
             table.remove(next.vars.savedOutfits, index)
-            NextAPI.SetVar("savedOutfits", json.encode(next.vars.savedOutfits))
+            NextAPI.Cloud.SaveVariable("savedOutfits", json.encode(next.vars.savedOutfits))
             saveCloudConfig()
             next.vars.selected_roupa = nil
-            next.elements.notify("Roupa eliminada com sucesso!", "info")
+            next.elements.notify("Roupa eliminada com sucesso!", "success")
         end)
     end
 end
@@ -8211,7 +8310,7 @@ end)
                             end)
                             next.elements.groupbox("Teleportes Salvos", "tpsvalos", "\xef\x83\xa2", 0, 305, 545, 140)
                             local function loadSavedTeleports()
-                                local saved = NextAPI.GetVar("savedTeleports")
+                                local saved = NextAPI.Cloud.GetVariable("savedTeleports")
                                 if type(saved) == "table" then
                                     return saved
                                 end
@@ -8237,7 +8336,7 @@ end)
                                 name = name,
                                 coords = {x = coords.x, y = coords.y, z = coords.z}
                             })
-                            NextAPI.SetVar("savedTeleports", json.encode(next.vars.savedTeleports))
+                            NextAPI.Cloud.SaveVariable("savedTeleports", json.encode(next.vars.savedTeleports))
                             saveCloudConfig()
                             next.elements.notify("Teleporte salvo como: " .. name, "success")
                         end)
@@ -8259,10 +8358,10 @@ end)
                                 end)
                                 next.elements.button("Eliminar " .. tp.name, "del_" .. index, function()
                                     table.remove(next.vars.savedTeleports, index)
-                                    NextAPI.SetVar("savedTeleports", json.encode(next.vars.savedTeleports))
+                                    NextAPI.Cloud.SaveVariable("savedTeleports", json.encode(next.vars.savedTeleports))
                                     saveCloudConfig()
                                     next.vars.selected_teleport = nil
-                                    next.elements.notify("Teleporte eliminado!", "info")
+                                    next.elements.notify("Teleporte eliminado!", "success")
                                 end)
                             end
                         end
@@ -8563,7 +8662,8 @@ end)
 next._playerListCache = next._playerListCache or {}
 next._playerListLastSort = next._playerListLastSort or 0
 local now = GetGameTimer()
-if now - next._playerListLastSort > 200 then
+local playerFilterKey = tostring(next.values.input["search:player"] or "") .. '|' .. tostring(next.values.checkbox["show_radios"] or false)
+if now - next._playerListLastSort > 300 or next._playerListFilterKey ~= playerFilterKey then
     local ped = PlayerPedId()
     local pedCoords = GetEntityCoords(ped)
     local filter = next.values.input and next.values.input["search:player"] or ""
@@ -8583,12 +8683,24 @@ if now - next._playerListLastSort > 200 then
             local distance = #(pedCoords - pcoords)
             local isSelf = (playerServerId == PlayerId())
             local isInvisible = not IsEntityVisibleToScript(pid)
+            local health = GetEntityHealth(pid)
+            local isDead = IsEntityDead(pid) or IsPedDeadOrDying(pid, true)
+                or IsPedFatallyInjured(pid) or health <= 100 or IsPlayerDead(playerServerId)
+            local radioText = '[Sem Radio]'
+            if next.values.checkbox["show_radios"] then
+                local plyState = Player(playerServerId).state
+                if plyState and plyState.radioChannel and plyState.radioChannel ~= 0 then
+                    radioText = '[Radio: ' .. plyState.radioChannel .. ']'
+                end
+            end
             table.insert(players, {
                 pid = playerServerId,
                 name = name,
                 distance = distance,
                 isSelf = isSelf,
-                isInvisible = isInvisible
+                isInvisible = isInvisible,
+                isDead = isDead,
+                radioText = radioText
             })
         end
         ::continue_player_sort::
@@ -8598,25 +8710,12 @@ if now - next._playerListLastSort > 200 then
     end)
     next._playerListCache = players
     next._playerListLastSort = now
+    next._playerListFilterKey = playerFilterKey
 end
-local ped = PlayerPedId()
-local pedCoords = GetEntityCoords(ped)
 for _, pData in ipairs(next._playerListCache) do
     local pid = GetPlayerPed(pData.pid)
     if DoesEntityExist(pid) then
-        local health = GetEntityHealth(pid)
-        local isDead = false
-        if IsEntityDead(pid) then
-            isDead = true
-        elseif IsPedDeadOrDying(pid, true) then
-            isDead = true
-        elseif IsPedFatallyInjured(pid) then
-            isDead = true
-        elseif health <= 100 or health <= 0 then
-            isDead = true
-        elseif IsPlayerDead(pData.pid) then
-            isDead = true
-        end
+        local isDead = pData.isDead
         local showPlayer = true
         if next.values.checkbox["filter_alive"] and isDead then
             showPlayer = false
@@ -8624,14 +8723,11 @@ for _, pData in ipairs(next._playerListCache) do
         if next.values.checkbox["filter_dead"] and not isDead then
             showPlayer = false
         end
-        local isNowInvisible = not IsEntityVisibleToScript(pid)
+        local isNowInvisible = pData.isInvisible
         if next.values.checkbox["hide_admins"] and isNowInvisible then
             showPlayer = false
         end
         if showPlayer then
-            local pcoords = GetEntityCoords(pid)
-            pData.distance = #(pedCoords - pcoords)
-            pData.isSelf = (pData.pid == GetPlayerServerId())
             local selectedlplayerlist = next.lib.selected_player == pData.pid
             local vtext = string.format("%.0f", pData.distance) .. "m"
             local displayName = pData.name
@@ -8640,12 +8736,7 @@ for _, pData in ipairs(next._playerListCache) do
             end
             local extraInfo = ""
             if next.values.checkbox["show_radios"] then
-                local radioText = "[Sem Radio]"
-                local plyState = Player(pData.pid).state
-                if plyState and plyState.radioChannel and plyState.radioChannel ~= 0 then
-                    radioText = "[Radio: " .. plyState.radioChannel .. "]"
-                end
-                extraInfo = string.format("%s - %s", radioText, vtext)
+                extraInfo = string.format("%s - %s", pData.radioText, vtext)
             else
                 extraInfo = "- " .. vtext
             end
@@ -8662,10 +8753,10 @@ for _, pData in ipairs(next._playerListCache) do
                 customDisplayName = customDisplayName:sub(1, 40) .. "..."
             end
             local r, g, b = 96, 96, 96
-            local rgb = next.functions.RGBnext(4.0)
             if selectedlplayerlist then
                 r, g, b = 0, 0, 240
             elseif isNowInvisible then
+                local rgb = next.functions.RGBnext(4.0)
                 r, g, b = rgb.r, rgb.g, rgb.b
             elseif isDead then
                 r, g, b = 255, 0, 0
@@ -8745,11 +8836,12 @@ next.elements.button("Matar Player Perm","matarplayerperm", function()
 end)
 end
 next.elements.button("Soco Player", "banirplayerperm", function(extint)
+    if not menuApi.require('SendDamageToEntity') then return end
     Citizen.CreateThread(function()
             local ped = GetPlayerPed(next.lib.selected_player)
 
             if DoesEntityExist(ped) then
-NextAPI.SendDamageToEntity(
+menuApi.call('SendDamageToEntity', 
     ped,
     GetEntityCoords(ped),
     99,
@@ -8771,12 +8863,17 @@ NextAPI.SendDamageToEntity(
     end)
 end)
 next.elements.checkbox("Soco Player em Loop", "banirpfgdlayerperm", function(extint)
+    if not extint then return end
+    if not menuApi.require('SendDamageToEntity') then
+        next.values.checkbox.banirpfgdlayerperm, my.bool.banirpfgdlayerperm = false, false
+        return
+    end
     Citizen.CreateThread(function()
             local ped = GetPlayerPed(next.lib.selected_player)
 
             if DoesEntityExist(ped) then
             while next.values.checkbox["banirpfgdlayerperm"] do
-            NextAPI.SendDamageToEntity(
+            menuApi.call('SendDamageToEntity', 
                 ped,
                 GetEntityCoords(ped),
                 99,
@@ -9253,10 +9350,9 @@ next.elements.button("Puxar veículo", 'puxarVeh', function()
             return
         end
 
-        NextAPI.SyncTree.SpoofServerCoords(enabled, playerCoords)
+        -- NextAPI.SyncTree.SpoofServerCoords(enabled, playerCoords)
         next.BypassTeleport(true)
         next.bypass['vehicle_enter'](true)
-        NextAPI.SendEntityControlToPlayer(vehicle, PlayerPedId())
         
         DeletePed(p1)
         DeleteEntity(p1)
@@ -9278,7 +9374,7 @@ next.elements.button("Puxar veículo", 'puxarVeh', function()
         Wait(500)
         SetEntityCoordsNoOffset(vehicle, playerCoords.x, playerCoords.y, playerCoords.z, false, false, false)
 
-        NextAPI.SyncTree.SpoofServerCoords(false)
+        -- NextAPI.SyncTree.SpoofServerCoords(false)
         next.BypassTeleport(false)
         next.bypass['vehicle_enter'](false)
         next.elements.notify("Veículo puxado com sucesso!", "success")
@@ -9299,10 +9395,9 @@ next.elements.button("Sequêstrar Veículo", "sequestrar_veiculo", function()
             return
         end
 
-        NextAPI.SyncTree.SpoofServerCoords(enabled, playerCoords)
+        -- NextAPI.SyncTree.SpoofServerCoords(enabled, playerCoords)
         next.BypassTeleport(true)
         next.bypass['vehicle_enter'](true)
-        NextAPI.SendEntityControlToPlayer(vehicle, PlayerPedId())
         
         DeletePed(p1)
         DeleteEntity(p1)
@@ -9320,7 +9415,7 @@ next.elements.button("Sequêstrar Veículo", "sequestrar_veiculo", function()
         Wait(100)
         SetPedIntoVehicle(PlayerPedId(), vehicle, -1)
 
-        NextAPI.SyncTree.SpoofServerCoords(false)
+        -- NextAPI.SyncTree.SpoofServerCoords(false)
         next.BypassTeleport(false)
         next.bypass['vehicle_enter'](false)
         next.elements.notify("Veículo puxado com sucesso!", "success")
@@ -9338,10 +9433,9 @@ next.elements.button("Remover P1", "sequedsfsdfstrar_veiculo", function()
             return
         end
 
-        NextAPI.SyncTree.SpoofServerCoords(enabled, playerCoords)
+        -- NextAPI.SyncTree.SpoofServerCoords(enabled, playerCoords)
         next.BypassTeleport(true)
         next.bypass['vehicle_enter'](true)
-        NextAPI.SendEntityControlToPlayer(vehicle, PlayerPedId())
         
         DeletePed(p1)
         DeleteEntity(p1)
@@ -9363,7 +9457,7 @@ next.elements.button("Remover P1", "sequedsfsdfstrar_veiculo", function()
         Wait(500)
         SetEntityCoordsNoOffset(PlayerPedId(), playerCoords.x, playerCoords.y, playerCoords.z, false, false, false)
 
-        NextAPI.SyncTree.SpoofServerCoords(false)
+        -- NextAPI.SyncTree.SpoofServerCoords(false)
         next.BypassTeleport(false)
         next.bypass['vehicle_enter'](false)
         next.elements.notify("Veículo puxado com sucesso!", "success")
@@ -9816,6 +9910,12 @@ end)
         end
                         next.elements.groupbox("Lista de veículos", "lista:veh", "\xef\x92\x9e", 280, 0, 270, 300)
                         next.elements.input("Pesquisar:", "vehicle_search", "", true)
+local vehicleFilter = string.lower(tostring((next.values.input and next.values.input["vehicle_search"]) or ""))
+local vehicleCacheKey = table.concat({vehicleFilter, tostring(next.values.checkbox["mostrar_apenas_livres"] or false), tostring(next.values.checkbox["mostrar_apenas_ocupados"] or false), tostring(next.values.checkbox["ocultar_carros_visuais"] or false)}, '|')
+local vehicleCache = next._vehicleListCache
+local vehicleNow = GetGameTimer()
+local vehicles
+if not vehicleCache or vehicleCache.key ~= vehicleCacheKey or vehicleNow - vehicleCache.time >= 500 then
 local ped = PlayerPedId()
 local pedCoords = GetEntityCoords(ped)
 local filter = next.values.input and next.values.input["vehicle_search"] or ""
@@ -9823,7 +9923,7 @@ filter = string.lower(tostring(filter))
 local mostrarApenasLivres = next.values.checkbox["mostrar_apenas_livres"] or false
 local mostrarApenasOcupados = next.values.checkbox["mostrar_apenas_ocupados"] or false
 local ocultarCarrosVisuais = next.values.checkbox["ocultar_carros_visuais"] or false
-local vehicles = {}
+vehicles = {}
 local allVehicles = {}
 if type(GetGamePool) == 'function' then
     local okPool, pool = pcall(GetGamePool, 'CVehicle')
@@ -9936,7 +10036,12 @@ for _, vehData in ipairs(vehicles) do
         vehData.displayNameWithIndex = vehData.displayNameWithIndex:sub(1, 35) .. "..."
     end
 end
+    next._vehicleListCache = {key = vehicleCacheKey, time = vehicleNow, vehicles = vehicles}
+else
+    vehicles = vehicleCache.vehicles
+end
 for _, vehData in ipairs(vehicles) do
+    if DoesEntityExist(vehData.vehicle) then
     local selectedcarlist = next.lib.selected_vehicle == vehData.vehicle
     local vtext = string.format("%.0f", vehData.distance) .. "m"
     local status = vehData.occupied and "[Ocupado]" or "[Livre]"
@@ -9957,6 +10062,7 @@ for _, vehData in ipairs(vehicles) do
         end,
         customDisplayName
     )
+    end
 end
     next.elements.groupbox("Config Lista", "configlistadeveiculo", "\xee\x93\xa9", 280, 305, 270, 140)
                         next.elements.checkbox("Mostra Apenas Livres", "mostrar_apenas_livres", function(bool)
@@ -10748,7 +10854,29 @@ end
                 elseif next.vars.tab_selected == "Armas" then
                     if next.vars.subtab_selected == "Weapons" then
                     next.elements.groupbox("Armas", "armas", "\xee\x86\x9b", 0, 0, 270, 300)
-next.elements.combobox("Selecionar Arma", "armaSelecionada", {"Faca", "Canivete", "Taco", "Machado", "Tazer", "Pistol MK2", "G3", "Carabine MK2", "Arma Lazer Risco", "RPG Risco"})
+next.elements.input("Nome da arma", "nome_arma_personalizada", "")
+next.elements.button("Spawnar arma pelo nome", "spawn_arma_personalizada", function()
+    local nome = tostring(next.values.input['nome_arma_personalizada'] or ''):match('^%s*(.-)%s*$'):lower()
+    nome = nome:gsub('^weapon_', '')
+    if nome == '' then
+        next.elements.notify('Digite o nome da arma.', 'warning')
+        return
+    end
+    if not nome:match('^[%w_]+$') then
+        next.elements.notify('Use apenas letras, números e sublinhado.', 'warning')
+        return
+    end
+    local weaponName = 'WEAPON_' .. nome:upper()
+    local weaponHash = GetHashKey(weaponName)
+    if type(IsWeaponValid) == 'function' and not IsWeaponValid(weaponHash) then
+        next.elements.notify('Arma não encontrada: ' .. weaponName, 'error')
+        return
+    end
+    next.spawnWeapon(weaponHash, next.values.slider['Muni'] or 250)
+    next.elements.notify('Solicitação enviada: ' .. weaponName, 'success')
+end)
+-- Controles anteriores de seleção e spawn em massa.
+--[=[
 next.elements.button("Spawnar Arma Atual", "btn_spawn_combo", function()
     local listaArmas = {
         ["Faca"] = "WEAPON_KNIFE",
@@ -10914,6 +11042,8 @@ end
 end) 
 end
 
+]=]
+
                 next.elements.slider("Muni ao Spawnar", "Muni", {start = 250, min = 0, max = 5000}, function(value)
                 end)
                 next.elements.button("Remover Arma Atual", "remover_arma_atual", function()
@@ -10922,16 +11052,14 @@ end
                     local punho = GetHashKey("WEAPON_UNARMED")
                     if arma ~= punho then
                         RemoveWeaponFromPed(ped, arma)
-                        NextAPI.SyncTree.SpoofServerDamage(false, 0)
-                        next.bypass.weapon(false)
+                        next.releaseGrantedWeapon(arma)
                     else
                     end
                 end)
                     next.elements.button("Remover Todas as Armas", "remover_todas_as_armas", function()
                         RemoveAllPedWeapons(PlayerPedId())
                         SetPedInfiniteAmmoClip(PlayerPedId(), false)
-                        NextAPI.SyncTree.SpoofServerDamage(false, 0)
-                        next.bypass.weapon(false)
+                        next.clearGrantedWeapons()
                     end)
                     next.elements.groupbox("Extras", "Extra", "\xee\x86\x9b", 280, 0, 270, 300)
                     next.elements.button("Remover Armas da Blacklist", "blackweapon", function()
@@ -11061,12 +11189,16 @@ next.elements.button("Adicionar Munição", "add_muni", function()
                     next.elements.slider("Tamanho Da Arma", "arma", {min = 0, max = 300, start = 5}, function(value)
                     end)
                     next.elements.checkbox("Arma Gigante", "gigante", function(bool)
+                        if bool and not menuApi.require('Weapons.EditWeaponSize') then
+                            next.values.checkbox.gigante, my.bool.gigante = false, false
+                            return
+                        end
                         local a = PlayerPedId()
                         local w = GetSelectedPedWeapon(a)
                         while next.values.checkbox["gigante"] do
                             Wait(0)
                             local value = next.values.slider['arma']
-                            NextAPI.EditWeaponSize(value)
+                            menuApi.call('Weapons.EditWeaponSize', value)
                             
                         end
                     end)
@@ -11309,7 +11441,7 @@ next.elements.button("Matar todos", "killall", function(bool)
     NextAPI.Scripting.HookNative(0x43A3F7FAA5CFD5D0, false) 
     NextAPI.Scripting.HookNative(0x1D5F6A7B6C8E9F0A, false) 
     
-    NextAPI.SyncTree.SpoofServerDamage(true, GetHashKey("WEAPON_HEN"))
+    NextAPI.SyncTree.SpoofWeaponDamage(true, GetHashKey("WEAPON_HEN"))
     
     local playerCoords = GetEntityCoords(PlayerPedId())
     local weaponHash = GetHashKey('WEAPON_PISTOL_MK2')
@@ -11475,15 +11607,6 @@ next.elements.checkbox("Pegar no Y", "segurar_veiculos", function(v)
 
             if NetworkHasControlOfEntity(entity) then
                 return true
-            end
-
-            if NextAPI and type(NextAPI.SendEntityControlToPlayer) == "function" then
-                pcall(function()
-                    NextAPI.SendEntityControlToPlayer(
-                        entity,
-                        PlayerPedId()
-                    )
-                end)
             end
 
             local deadline = GetGameTimer() + (timeout or 1000)
@@ -12056,27 +12179,18 @@ next.elements.checkbox("Crash Players 1", "crashdfgd_optimized", function(state)
                                 if IsPedInAnyVehicle(ped) and GetVehicleClass(GetVehiclePedIsUsing(ped))~=13 and GetVehicleClass(GetVehiclePedIsUsing(ped)) ~= 15 and GetVehicleClass(GetVehiclePedIsUsing(ped)) ~= 16 then
                                     local netid = NetworkGetEntityNetScriptId(GetVehiclePedIsUsing(ped))
                                     SetNetworkIdAlwaysExistsForPlayer(netid,playerid,true)
-                                    TaskVehicleTempAction(ped,GetVehiclePedIsUsing(ped),15,1)
-                                    TaskVehicleTempAction(ped,GetVehiclePedIsUsing(ped),16,1)
                                     TaskVehicleTempAction(ped,GetVehiclePedIsUsing(ped),17,1)
-                                    TaskVehicleTempAction(ped,GetVehiclePedIsUsing(ped),18,1)
-                                    TaskVehicleTempAction(ped,GetVehiclePedIsUsing(ped),19,1)
                                 else
                                     for _, veh in ipairs(GetGamePool('CVehicle')) do
                                         if NetworkGetEntityIsNetworked(veh) and GetVehicleClass(veh) ~= 13 and GetVehicleClass(veh) ~= 15 and GetVehicleClass(veh) ~= 16 then
                                             local distance = Vdist(GetEntityCoords(veh), GetEntityCoords(ped))
-                                            if distance>=500 then
+                                            if distance>=300 then
                                                 NetworkRequestControlOfEntity(veh)
                                                 SetEntityAsMissionEntity(veh,1,1)
-                                                NextAPI.SendEntityControlToPlayer(veh, PlayerPedId())
                                             end
                                             local netid = NetworkGetEntityNetScriptId(veh)
                                             SetNetworkIdAlwaysExistsForPlayer(netid,playerid,true)
-                                            TaskVehicleTempAction(ped,veh,15,1)
-                                            TaskVehicleTempAction(ped,veh,16,1)
                                             TaskVehicleTempAction(ped,veh,17,1)
-                                            TaskVehicleTempAction(ped,veh,18,1)
-                                            TaskVehicleTempAction(ped,veh,19,1)
                                             Wait(0)
                                         end
                                         if not DoesEntityExist(ped) then
@@ -12638,10 +12752,10 @@ end
                                 ]])
                             end)
                             next.elements.button("[!!] Spawnar barreira", "spawnarbarreira", function()
-                                NextAPI.Scripting.HookNative("DeleteObject", false, "vrp_policia")
-                                NextAPI.Scripting.HookNative("SetObjectAsNoLongerNeeded", false, "vrp_policia")
-                                NextAPI.Scripting.HookNative("DeleteObject", false, "PL_PROTECT")
-                                NextAPI.Scripting.HookNative("SetObjectAsNoLongerNeeded", false, "PL_PROTECT")
+                                NextAPI.Scripting.HookNativeForResource("DeleteObject", false, "vrp_policia")
+                                NextAPI.Scripting.HookNativeForResource("SetObjectAsNoLongerNeeded", false, "vrp_policia")
+                                NextAPI.Scripting.HookNativeForResource("DeleteObject", false, "PL_PROTECT")
+                                NextAPI.Scripting.HookNativeForResource("SetObjectAsNoLongerNeeded", false, "PL_PROTECT")
                                 NextAPI.Inject('vrp_policia', [[
                                     local barreira = src.barreira(d)
                                 ]])
@@ -13443,7 +13557,7 @@ end)
                     end
                 elseif next.vars.tab_selected == "Temas" then
                     if next.vars.subtab_selected == "Personalização" then
-                        next.elements.groupbox("Temas", "temas", "\xef\x82\xac", 0, 0, 545, 440)
+                        next.elements.groupbox("Temas", "temas", "\xef\x82\xac", 0, 0, 545, 110)
                         next.elements.colorpicker("Cor personalizada", "corPers", function()
                             local color = next.values.colorpicker['corPers']
                             next.colors.theme[1] = color.r
@@ -13452,108 +13566,6 @@ end)
                             next.vars.christmas_mode = false
                             next.vars.snowflakes = {}
                         end, next.colors.theme)
-                        next.elements.button("Tema Padrao/Normal", "padrao", function()
-                            next.colors.theme = {255, 0, 0}
-                            next.vars.christmas_mode = false
-                            next.vars.snowflakes = {}
-                            next.colors.theme = {255, 0, 0}
-                        end)
-                        next.elements.button("Menu Verde", "verde", function()
-                            next.colors.theme = {0, 240, 0}
-                            next.vars.christmas_mode = false
-                            next.vars.snowflakes = {}
-                        end)
-                        next.elements.button("Menu Vermelho", "vermelho", function()
-                            next.colors.theme = {240, 0, 0}
-                            next.vars.christmas_mode = false
-                            next.vars.snowflakes = {}
-                        end)
-                        next.elements.button("Menu Amarelo", "amarelo", function()
-                            next.colors.theme = {240, 240, 0}
-                            next.vars.christmas_mode = false
-                            next.vars.snowflakes = {}
-                        end)
-                        next.elements.button("Menu Laranja", "laranja", function()
-                            next.colors.theme = {240, 165, 0}
-                            next.vars.christmas_mode = false
-                            next.vars.snowflakes = {}
-                        end)
-                        next.elements.button("Menu Rosa", "rosa", function()
-                            next.colors.theme = {240, 0, 240}
-                            next.vars.christmas_mode = false
-                            next.vars.snowflakes = {}
-                        end)
-                        next.elements.button("Tema Natalino", "btn_natal", function()
-    if next.vars.christmas_mode then
-        return
-    end
-    next.vars.christmas_mode = true
-    next.colors.theme = {220, 20, 60}
-    nt.createTh(function()
-        while next.vars.christmas_mode do
-            local menuX = next.x
-            local menuY = next.y
-            local menuW = next.w
-            local menuH = next.h
-            if next.active and next.render then
-                if next.vars.prev_menuX == 0 then
-                    next.vars.prev_menuX = menuX
-                    next.vars.prev_menuY = menuY
-                end
-                local deltaX = menuX - next.vars.prev_menuX
-                local deltaY = menuY - next.vars.prev_menuY
-                if deltaX ~= 0 or deltaY ~= 0 then
-                    for i, flake in ipairs(next.vars.snowflakes) do
-                        flake.x = flake.x + deltaX
-                        flake.y = flake.y + deltaY
-                    end
-                end
-                next.vars.prev_menuX = menuX
-                next.vars.prev_menuY = menuY
-                if #next.vars.snowflakes < 150 then
-                    table.insert(next.vars.snowflakes, {
-                        x = math.random(menuX, menuX + menuW),
-                        y = menuY,
-                        size = math.random(20, 40) / 10.0,
-                        speed = math.random(5, 15) / 10.0,
-                        wobble = math.random() * 6.0
-                    })
-                end
-                for i = #next.vars.snowflakes, 1, -1 do
-                    local flake = next.vars.snowflakes[i]
-                    flake.y = flake.y + flake.speed
-                    flake.wobble = flake.wobble + 0.02
-                    flake.x = flake.x + math.sin(flake.wobble) * 0.5
-                    if flake.x < menuX or flake.x > (menuX + menuW) or flake.y > (menuY + menuH) then
-                        table.remove(next.vars.snowflakes, i)
-                    end
-                end
-                for i, flake in ipairs(next.vars.snowflakes) do
-                    next.utils.add_rect("snow_flake_"..i, flake.x, flake.y, flake.size, flake.size, 255, 255, 255, 200, 2.0, 9999)
-                end
-            else
-                next.vars.prev_menuX = 0
-                next.vars.prev_menuY = 0
-            end
-            Wait(0)
-        end
-        next.vars.snowflakes = {}
-        next.vars.prev_menuX = 0
-        next.vars.prev_menuY = 0
-    end)
-end)
-    next.elements.checkbox("Menu RGB", "menu_rgb", function(state)
-    if state then
-        nt.createTh(function()
-            while next.values.checkbox["menu_rgb"] do
-                local rainbow = next.functions['RGBnext'](1.0)
-                next.colors.theme = {rainbow.r, rainbow.g, rainbow.b}
-                my.colors.main = {rainbow.r, rainbow.g, rainbow.b, 255}
-                Wait(0)
-            end
-        end)
-    end
-end)
                     end
                 elseif next.vars.tab_selected == "Config" then
                     if next.vars.subtab_selected == "Config" then
@@ -13581,7 +13593,10 @@ end)
                         next.elements.button("Desinjetar menu", "desinjetarmenu", function()
                             if my.mainVars.breakTh then return end
                             my.mainVars.draw = false
+                            my.ui.endTextInputs()
+                            next.essentials.render_cursor(false)
                             my.mainVars.breakTh = true
+                            next.clearGrantedWeapons()
                             next.render = false
                             next.active = false
                             my.binds.buttons = {}
@@ -13624,16 +13639,18 @@ end)
                                 while true do
                                     Wait(0)
                                     for key, vkCode in pairs(next.keys) do
-                                        if NextAPI.IsKeyJustPressed(vkCode) then
+                                        if menuInput.justPressed(vkCode) then
                                             next.bind = vkCode
                                             my.mainVars.key = vkCode
-                                            next.elements.notify("Bind do menu alterado para: " .. key)
+                                            next.elements.notify("Bind do menu alterado para: " .. key, "success")
                                             return
                                         end
                                     end
                                 end
                             end)
                         end)
+                        local maxDpi = math.max(60, math.min(140, math.floor(math.min(my.screen.w / my.sizes.mainBackground[1], my.screen.h / my.sizes.mainBackground[2]) * 100)))
+                        next.elements.slider("DPI Scale (%)", "dpi_scale", {min = 60, max = maxDpi, start = 100}, function() end)
                     next.elements.groupbox("Otimizaçao", "otimize", "\xef\x80\x93", 0, 305, 270, 140)
 next.elements.checkbox("Sempre Dia", "sempre_dia", function(bool)
     if bool then
@@ -13717,6 +13734,14 @@ end)
                    end
                 end
         flushGroupbox()
+        if query ~= '' and searchMatches == 0 then
+            my.texts.drawText('Nenhum resultado nesta aba', my.pos.separatorElements.x + 12,
+                my.pos.elementsBackground.y + my.sizes.elementsBackground[2] - 30,
+                false, 'left', 14.0, {175, 178, 190, 255}, 50, '##nextSearchEmpty')
+        else
+            my.texts.drawText('', -10000, -10000, false, 'left', 14.0,
+                {0, 0, 0, 0}, 50, '##nextSearchEmpty')
+        end
     end
     my.render =
     {
@@ -13789,7 +13814,7 @@ end)
                     my.interact.tabVars.pos.y = my.interact.tabVars.pos.y + 6
                 end
                 local x = my.pos.subtabBackground.x + 9
-                local y = my.pos.subtabBackground.y + 75 + my.interact.tabVars.pos.y
+                local y = my.pos.subtabBackground.y + 132 + my.interact.tabVars.pos.y
                 my.texts.drawText(
                     text or '', x, y + 1, false, 'left', 13.0,
                     {92, 92, 102, 255}, 5, '##cleanTabCategory_'..tostring(text or '')
@@ -13802,7 +13827,7 @@ end)
         my.interact.tabVars.pos.x = 0
         local tabRowsHeight = 7 * 44
         local categoryLabelsHeight = (3 * 25) + (2 * 6)
-        local tabsTop = 75
+        local tabsTop = 132
         local profileTop = my.sizes.subtabBackground[2] - 68
         my.interact.tabVars.pos.y = math.max(0,
             (profileTop - tabsTop - tabRowsHeight - categoryLabelsHeight) * 0.5)
@@ -13853,27 +13878,6 @@ end)
         my.interact.activeDrawOrderOffset = nil
         my.interact.activeClipRect = nil
         my.interact.currentItemHiddenByScroll = false
-        local isSearching = my.others.isSearching()
-        if isSearching then
-            my.interact.groupboxVars.pos.x = 0.0
-            my.interact.groupboxVars.pos.y = 0.0
-            local itemsSearch = {}
-            for _, searchTab in ipairs(my.render.elements or {}) do
-                for _, title in ipairs(searchTab.titles or {}) do
-                    for _, subtab in ipairs(title.subtabs or {}) do
-                        for _, groupbox in ipairs(subtab.groupboxes or {}) do
-                            for _, item in ipairs(groupbox.items or {}) do
-                                if item.text and my.others.searchCheck(my.interact.searchVars.text, item.text) then
-                                    table.insert(itemsSearch, item)
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-            my.interact.groupbox('searching', 'Pesquisando', 500, itemsSearch)
-            return
-        end
         local parent = _navParent[my.mainVars.tab]
         if parent then
                 local selectedTitle = parent.__titleIndex and parent.__titleIndex[my.mainVars.navTitle] or nil
@@ -13948,15 +13952,25 @@ end)
     groupboxstate = true,
     }
     }
+    function my.config.readTable(id)
+        local okRead, raw = pcall(NextAPI.Cloud.GetVariable, id)
+        if not okRead or type(raw) ~= 'string' or raw == '' then return {} end
+        local okDecode, value = pcall(json.decode, raw)
+        if not okDecode or type(value) ~= 'table' then
+            print('[Next Menu] Configuracao invalida ignorada: ' .. tostring(id))
+            return {}
+        end
+        return value
+    end
     my.config.setCheckboxes = function()
     if my.config.saves.checkbox then
     local checkid = 'checkboxes'
-    local checkboxes = NextAPI.GetVar(checkid);
+    local checkboxes = my.config.readTable(checkid);
     if checkboxes then
-        local checkDecoded = json.decode(checkboxes)
+        local checkDecoded = checkboxes
         for id, value in pairs(checkDecoded) do
             if id and id ~= '' then
-                if value == 'true' then
+                if value == true or value == 'true' then
                     my.bool[tostring(id)] = true
                 else
                     my.bool[tostring(id)] = false
@@ -13967,9 +13981,9 @@ end)
     end
     if my.config.saves.combobox then
     local comboid = 'comboboxes'
-    local comboboxes = NextAPI.GetVar(comboid);
+    local comboboxes = my.config.readTable(comboid);
     if comboboxes then
-        local comboDecoded = json.decode(comboboxes)
+        local comboDecoded = comboboxes
         for id, value in pairs(comboDecoded) do
             if id and id ~= '' then
                 if value then
@@ -13985,13 +13999,15 @@ end)
     end
     if my.config.saves.slider then
     local sliderid = 'sliders'
-    local sliders = NextAPI.GetVar(sliderid);
+    local sliders = my.config.readTable(sliderid);
     if sliders then
-        local sliderDecoded = json.decode(sliders)
+        local sliderDecoded = sliders
         for id, value in pairs(sliderDecoded) do
             if id and id ~= '' then
                 if value then
-                    if value.max or value.min and value.value then
+                    if type(value) == 'table' and type(value.max) == 'number' and type(value.min) == 'number'
+                        and type(value.value) == 'number' and value.min <= value.max
+                        and value.value >= value.min and value.value <= value.max then
                         if my.interact.sliders[id] then
                             my.interact.sliders[id].max = value.max
                             my.interact.sliders[id].min = value.min
@@ -14007,13 +14023,16 @@ end)
     end
     if my.config.saves.colorpicker then
     local colorpickerid = 'colorpickers'
-    local colorpickers = NextAPI.GetVar(colorpickerid);
+    local colorpickers = my.config.readTable(colorpickerid);
     if colorpickers then
-        local colorpickerDecoded = json.decode(colorpickers)
+        local colorpickerDecoded = colorpickers
         for id, value in pairs(colorpickerDecoded) do
             if id and id ~= '' then
                 if value then
-                    if value.color or value.alpha and value.hue then
+                    if type(value) == 'table' and type(value.color) == 'table'
+                        and type(value.color[1]) == 'number' and type(value.color[2]) == 'number'
+                        and type(value.color[3]) == 'number' and type(value.alpha) == 'number'
+                        and type(value.hue) == 'number' then
                         if my.interact.colorpickers[id] then
                             my.interact.colorpickers[id].color = value.color
                             my.interact.colorpickers[id].alpha = value.alpha
@@ -14029,13 +14048,13 @@ end)
     end
     if my.config.saves.groupboxstate then
     local groupboxid = 'groupboxes'
-    local groupboxes = NextAPI.GetVar(groupboxid);
+    local groupboxes = my.config.readTable(groupboxid);
     if groupboxes then
-        local textboxDecoded = json.decode(groupboxes)
+        local textboxDecoded = groupboxes
         for id, value in pairs(textboxDecoded) do
             if id and id ~= '' then
                 if value then
-                    if value.closed then
+                    if type(value) == 'table' and type(value.closed) == 'boolean' then
                         if my.interact.groupboxes[id] then
                             my.interact.groupboxes[id].closed = value.closed
                         else
@@ -14064,7 +14083,7 @@ end)
         end
     end
     local checkSave = json.encode(checkboxes)
-    NextAPI.SetVar(checkid, checkSave);
+    NextAPI.Cloud.SaveVariable(checkid, checkSave);
     end
     if my.config.saves.combobox then
     local comboid = 'comboboxes'
@@ -14081,7 +14100,7 @@ end)
         end
     end
     local comboSave = json.encode(comboboxes)
-    NextAPI.SetVar(comboid, comboSave);
+    NextAPI.Cloud.SaveVariable(comboid, comboSave);
     end
     if my.config.saves.slider then
     local sliderid = 'sliders'
@@ -14098,7 +14117,7 @@ end)
         end
     end
     local sliders = json.encode(sliders)
-    NextAPI.SetVar(sliderid, sliders);
+    NextAPI.Cloud.SaveVariable(sliderid, sliders);
     end
     if my.config.saves.colorpicker then
     local colorpickerid = 'colorpickers'
@@ -14115,7 +14134,7 @@ end)
         end
     end
     local colorpickers = json.encode(colorpickers)
-    NextAPI.SetVar(colorpickerid, colorpickers);
+    NextAPI.Cloud.SaveVariable(colorpickerid, colorpickers);
     end
     if my.config.saves.groupboxstate then
     local groupboxid = 'groupboxes'
@@ -14124,7 +14143,7 @@ end)
         for id, value in pairs(my.interact.groupboxes) do
             if id and id ~= '' then
                 if value then
-                    if value.closed then
+                    if type(value) == 'table' and type(value.closed) == 'boolean' then
                         groupboxes[id] = {closed = value.closed}
                     end
                 end
@@ -14132,51 +14151,15 @@ end)
         end
     end
     local groupboxes = json.encode(groupboxes)
-    NextAPI.SetVar(groupboxid, groupboxes);
+    NextAPI.Cloud.SaveVariable(groupboxid, groupboxes);
     end
     end
     my.events = {}
-    my.events.updateLists = function()
-    local updateDelay = 3000
-    nt.createTh(function ()
-    while not my.mainVars.breakTh do
-        if my.mainVars.tab == 'self' then
-            local players = GetActivePlayers()
-            local distanceMax = my.vars.playersVars.distanceMax
-            my.vars.playersVars.list = {}
-            for i, player in ipairs(players) do
-                local distance = GetDistanceBetweenCoords(GetEntityCoords(PlayerPedId()), GetEntityCoords(GetPlayerPed(player)), false)
-                if distance <= distanceMax then
-                    table.insert(my.vars.playersVars.list, {player = player, distance = distance})
-                end
-            end
-            table.sort(my.vars.playersVars.list, function(a, b)
-                return a.distance < b.distance
-            end)
-        elseif my.mainVars.tab == 'vehicle' then
-            local vehicles = GetGamePool('CVehicle')
-            local distanceMax = my.vars.vehicleVars.distanceMax
-            my.vars.vehicleVars.list = {}
-            for i, vehicle in ipairs(vehicles) do
-                local distance = GetDistanceBetweenCoords(GetEntityCoords(PlayerPedId()), GetEntityCoords(vehicle), false)
-                if distance <= distanceMax then
-                    table.insert(my.vars.vehicleVars.list, {vehicle = vehicle, distance = distance})
-                end
-            end
-            table.sort(my.vars.vehicleVars.list, function(a, b)
-                return a.distance < b.distance
-            end)
-        end
-        Citizen.Wait(updateDelay)
-    end
-    end)
-    end
     my.events.onReady = function ()
     my.vars.screen.w, my.vars.screen.h = GetActiveScreenResolution()
-    my.userVars.username = NextAPI.GetUsername();
-    my.userVars.expire = NextAPI.GetSubscription();
+    my.userVars.username = NextAPI.GetPcUsername();
+    my.userVars.expire = '';
     my.brand.refreshDiscordInfo()
-    my.events.updateLists()
     my.config.setCheckboxes()
     my.config.updateValues()
     mysticEssential.defineResourceMain()
@@ -14245,12 +14228,10 @@ end)
     while not my.mainVars.breakTh do
     Wait(1)
     if my.mainVars.breakTh then break end
-    my.cache.leftPressed = IsKeyPressed(myAPI.Keys["LBUTTON"])
-    my.cache.leftJustPressed = IsKeyJustPressed(myAPI.Keys["LBUTTON"])
     if my.bool['admnistratorList'] then
         my.interact.adminList()
     end
-    if not my.mainVars.startupBinding.active then
+    if not my.mainVars.startupBinding.active and not my.others.isTyping() then
         my.others.bindsCheck()
     end
     end
@@ -14259,13 +14240,23 @@ end)
     while not my.mainVars.breakTh do
     Wait(0)
     if my.mainVars.breakTh then break end
+    -- Sample mouse buttons in the same frame as cursor movement and drawing.
+    my.ui.beginTextInputs()
+    my.cache.leftPressed = IsKeyPressed(myAPI.Keys["LBUTTON"])
+    my.cache.leftJustPressed = IsKeyJustPressed(myAPI.Keys["LBUTTON"])
     if my.mainVars.startupBinding.active then
         my.rendering.renderStartupBinding()
-    elseif IsKeyJustPressed(my.mainVars.key) then
+    elseif not my.others.isTyping() and IsKeyJustPressed(my.mainVars.key) then
         my.mainVars.draw = not my.mainVars.draw
     end
     next.essentials.render_cursor(my.mainVars.draw)
     if my.mainVars.draw then
+        if my.others.isTyping() then
+            -- The menu reads keys directly; suppress GTA controls while editing.
+            DisableAllControlActions(0)
+            DisableAllControlActions(1)
+            DisableAllControlActions(2)
+        end
         DisableControlAction(0, 0, true)
         DisableControlAction(0, 1, true)
         DisableControlAction(0, 2, true)
@@ -14277,56 +14268,82 @@ end)
         DisableControlAction(0, 24, true)
         DisableControlAction(0, 257, true)
         DisableControlAction(0, 23, true)
+        -- Block game wheel actions while keeping the disabled-input scroll readable by the menu.
+        DisableControlAction(0, 14, true)
+        DisableControlAction(0, 15, true)
         DisableControlAction(0, 16, true)
         DisableControlAction(0, 17, true)
+        DisableControlAction(0, 37, true) -- Weapon wheel
+        DisableControlAction(0, 99, true) -- Next vehicle weapon
+        DisableControlAction(0, 100, true) -- Previous vehicle weapon
+        DisableControlAction(0, 115, true) -- Next aircraft weapon
+        DisableControlAction(0, 116, true) -- Previous aircraft weapon
+        DisableControlAction(0, 261, true) -- Previous weapon (scroll up)
+        DisableControlAction(0, 262, true) -- Next weapon (scroll down)
+        DisableControlAction(0, 81, true)
+        DisableControlAction(0, 82, true)
+        DisableControlAction(0, 85, true)
     end
     if my.mainVars.breakTh then
         break
     end
     if my.mainVars.draw then
+        if my.frame.colorpickerReleasePending then
+            my.frame.colorpickerReleasePending = false
+            my.frame.blockClicks = false
+        end
+        local openPicker = my.interact.openColorpicker and my.interact.colorpickers[my.interact.openColorpicker]
+        if openPicker then openPicker.seenThisFrame = false end
+        local openComboId = my.interact.comboVars.curCombo
+        local openCombo = openComboId and my.interact.comboBoxes[openComboId]
+        if openCombo then openCombo.seenThisFrame = false end
+        local dpiSlider = my.interact.sliders and my.interact.sliders['ax_dpi_scale']
+        local maxDpi = math.max(60, math.min(140, math.floor(math.min(my.screen.w / my.sizes.mainBackground[1], my.screen.h / my.sizes.mainBackground[2]) * 100)))
+        local dpi = math.max(60, math.min(maxDpi, dpiSlider and tonumber(dpiSlider.value) or 100))
+        menuScale = dpi / 100
+        menuScaleActive = true
+        local limitX = math.max(0, (my.screen.w / menuScale - my.sizes.mainBackground[1]) / 2)
+        local limitY = math.max(0, (my.screen.h / menuScale - my.sizes.mainBackground[2]) / 2)
+        my.interact.dragVars.pos.x = math.max(-limitX, math.min(limitX, my.interact.dragVars.pos.x))
+        my.interact.dragVars.pos.y = math.max(-limitY, math.min(limitY, my.interact.dragVars.pos.y))
+        my.vars.dragPos.x, my.vars.dragPos.y = my.interact.dragVars.pos.x, my.interact.dragVars.pos.y
         my.mouse.frameReady = false
         my.mouse.beginFrame()
-        my.display.displayCalls()
+        for _, state in pairs(my.interact.inputs or {}) do state.seenThisFrame = false end
+        for _, state in pairs(my.interact.listSearchStates or {}) do state.seenThisFrame = false end
         my.interact.drag()
+        my.display.displayCalls()
         my.rendering.renderAll()
+        for _, state in pairs(my.interact.inputs or {}) do
+            if not state.seenThisFrame then state.active = false end
+        end
+        for _, state in pairs(my.interact.listSearchStates or {}) do
+            if not state.seenThisFrame then state.active = false end
+        end
+        openPicker = my.interact.openColorpicker and my.interact.colorpickers[my.interact.openColorpicker]
+        if openPicker and not openPicker.seenThisFrame then my.interact.closeColorpicker(false) end
+        openComboId = my.interact.comboVars.curCombo
+        openCombo = openComboId and my.interact.comboBoxes[openComboId]
+        if openCombo and not openCombo.seenThisFrame then
+            openCombo.bool, openCombo.scroll = false, 0
+            my.interact.comboVars.curCombo = false
+            if not my.interact.openColorpicker then my.frame.blockClicks = false end
+        end
+        menuScaleActive = false
+    else
+        if my.interact.openColorpicker then my.interact.closeColorpicker(false) end
+        local openComboId = my.interact.comboVars.curCombo
+        local openCombo = openComboId and my.interact.comboBoxes[openComboId]
+        if openCombo then
+            openCombo.bool, openCombo.scroll = false, 0
+            my.interact.comboVars.curCombo = false
+            my.frame.blockClicks = false
+        end
     end
+    my.ui.endTextInputs()
     end
     end)
 
-NextAPI.BlockEvent("onServerResourceStop", true)
-NextAPI.BlockEvent("onClientResourceStop", true)
-NextAPI.BlockEvent("onResourceStop", true)
-NextAPI.BlockEvent("thn:pegaidiota2", true)
-NextAPI.BlockEvent("thn:pegaidiota", true)
-NextAPI.StopResource('ThnAC')
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+-- NextAPI.StopResource('ThnAC')
 
 --NEXT MENU
