@@ -8798,7 +8798,6 @@ end
                         end)
                         next.elements.button("Copiar Roupas","copiar_roupa", function()
                             local player = GetPlayerPed(next.lib.selected_player)
-                            NextAPI.Scripting.HookNative(0xE952D6431689AD9A, false)
                             ClonePedToTarget(player,PlayerPedId())
                         end)
 
@@ -8891,7 +8890,7 @@ next.elements.checkbox("Soco Player em Loop", "banirpfgdlayerperm", function(ext
                 0,
                 0
             )
-            Wait(10)
+            Wait(200)
         end
         end
     end)
