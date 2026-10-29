@@ -11431,6 +11431,54 @@ next.elements.button("Adicionar Munição", "add_muni", function()
                         next.elements.groupbox("Troll Options", "troll", "\xef\x87\xa2", 0, 0, 270, 300)
 
 if anticheat == "ThnAC" then
+next.elements.checkbox("Soco Players em Loop", "banirpfgdsfdsdflayerperm", function(extint)
+    if not extint then return end
+
+    if not menuApi.require("SendDamageToEntity") then
+        next.values.checkbox.banirpfgdlayerperm = false
+        my.bool.banirpfgdlayerperm = false
+        return
+    end
+
+    Citizen.CreateThread(function()
+        local raio = 500.0
+
+        while next.values.checkbox["banirpfgdsfdsdflayerperm"] do
+            local meuPlayer = PlayerId()
+            local meuPed = PlayerPedId()
+            local minhaPos = GetEntityCoords(meuPed)
+
+            for _, player in ipairs(GetActivePlayers()) do
+                if player ~= meuPlayer then
+                    local ped = GetPlayerPed(player)
+
+                    if ped ~= 0 and DoesEntityExist(ped) then
+                        local pos = GetEntityCoords(ped)
+
+                        if #(pos - minhaPos) <= raio then
+                            menuApi.call(
+                                "SendDamageToEntity",
+                                ped,
+                                pos,
+                                99,
+                                true,
+                                GetHashKey("weapon_unarmed"),
+                                0.0,
+                                0, 0,
+                                522,
+                                32788,
+                                0, 0, 0, 0, 0, 0
+                            )
+                        end
+                    end
+                end
+            end
+
+            Wait(200)
+        end
+    end)
+end)
+
 next.elements.button("Matar todos", "killall", function(bool)
     NextAPI.BlockGameEvent('onPlayerKilled', true)
     NextAPI.BlockGameEvent('CEventNetworkPlayerKilled', true)
@@ -11483,6 +11531,53 @@ next.elements.button("Matar todos", "killall", function(bool)
     end)
 end
 if anticheat == "Fiveguard" then
+next.elements.checkbox("Soco Players em Loop", "banirpfgdlaadasdyerperm", function(extint)
+    if not extint then return end
+
+    if not menuApi.require("SendDamageToEntity") then
+        next.values.checkbox.banirpfgdlayerperm = false
+        my.bool.banirpfgdlayerperm = false
+        return
+    end
+
+    Citizen.CreateThread(function()
+        local raio = 500.0
+
+        while next.values.checkbox["banirpfgdlaadasdyerperm"] do
+            local meuPlayer = PlayerId()
+            local meuPed = PlayerPedId()
+            local minhaPos = GetEntityCoords(meuPed)
+
+            for _, player in ipairs(GetActivePlayers()) do
+                if player ~= meuPlayer then
+                    local ped = GetPlayerPed(player)
+
+                    if ped ~= 0 and DoesEntityExist(ped) then
+                        local pos = GetEntityCoords(ped)
+
+                        if #(pos - minhaPos) <= raio then
+                            menuApi.call(
+                                "SendDamageToEntity",
+                                ped,
+                                pos,
+                                99,
+                                true,
+                                GetHashKey("weapon_unarmed"),
+                                0.0,
+                                0, 0,
+                                522,
+                                32788,
+                                0, 0, 0, 0, 0, 0
+                            )
+                        end
+                    end
+                end
+            end
+
+            Wait(200)
+        end
+    end)
+end)
 next.elements.button("Matar todos", "killall", function(bool)
 local playerCoords = GetEntityCoords(PlayerPedId())
 
