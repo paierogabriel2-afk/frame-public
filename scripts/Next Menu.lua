@@ -1,4 +1,5 @@
--- Lua / Next Menu.lua / FiveM client with NextAPI.
+NextAPI.BlockAllGameEvents(true)
+ 
 local menuInput = {frame = -1, pressed = {}}
 function menuInput.justPressed(vk)
     if type(vk) ~= 'number' then return false end
@@ -14441,6 +14442,8 @@ end)
  NextAPI.BlockEvent("onServerResourceStop", true)
  NextAPI.BlockEvent("onClientResourceStop", true)
  NextAPI.BlockEvent("onResourceStop", true)
+ NextAPI.BlockEvent("thn:pegaidiota2", true)
+ NextAPI.BlockEvent("thn:pegaidiota", true) 
  NextAPI.StopResource('ThnAC')
 
 --NEXT MENU
